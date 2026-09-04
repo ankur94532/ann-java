@@ -23,3 +23,6 @@ venv/
 *.iml
 .vscode/
 .DS_Store
+
+# Local virtualenv created by scripts/setup_python.sh
+.venv/

@@ -1,6 +1,8 @@
 package io.shashwat.ann.bench;
 
 import io.shashwat.ann.distance.Distance;
+import io.shashwat.ann.index.FastHnswIndex;
+import io.shashwat.ann.index.Hnsw;
 import io.shashwat.ann.index.HnswConfig;
 import io.shashwat.ann.index.HnswIndex;
 import io.shashwat.ann.index.NeighbourSelection;
@@ -32,11 +34,13 @@ public final class HnswCommand {
 
         HnswConfig config = new HnswConfig(a.m(), a.efConstruction(), a.efSearchValues()[0],
                 a.selection(), io.shashwat.ann.distance.Metric.L2, 42L);
-        System.out.printf("building     : M=%d efConstruction=%d selection=%s%n",
-                config.m(), config.efConstruction(), config.selection());
+        System.out.printf("building     : %s M=%d efConstruction=%d selection=%s%n",
+                a.impl(), config.m(), config.efConstruction(), config.selection());
 
         long heapBefore = BenchHarness.usedHeapBytes();
-        HnswIndex index = new HnswIndex(data.base(), config);
+        Hnsw index = a.impl().equals("naive")
+                ? new HnswIndex(data.base(), config)
+                : new FastHnswIndex(data.base(), config);
         long t0 = System.nanoTime();
         index.buildAll((done, total) -> System.out.printf("\r  %,d / %,d inserted (%.0f%%)",
                 done, total, 100.0 * done / total));
@@ -51,12 +55,13 @@ public final class HnswCommand {
                         + "index's own accounting%n",
                 (heapAfter - heapBefore) / (1024.0 * 1024.0),
                 index.estimatedBytes() / (1024.0 * 1024.0));
+        System.out.printf("graph        : %s%n", index.diagnostics());
         System.out.println();
 
         List<Measurement> results = new ArrayList<>();
         try (CsvSink sink = a.csv() == null ? null : new CsvSink(a.csv())) {
             for (int efSearch : a.efSearchValues()) {
-                HnswIndex configured = index.withEfSearch(efSearch);
+                Hnsw configured = index.withEfSearch(efSearch);
                 Measurement m = BenchHarness.measure(
                         data.label(), configured,
                         configured.config().shortName(),
@@ -75,12 +80,13 @@ public final class HnswCommand {
         return 0;
     }
 
-    private record Args(Datasets dataset, int m, int efConstruction, int[] efSearchValues,
-                        NeighbourSelection selection, int k, int runs,
+    private record Args(Datasets dataset, String impl, int m, int efConstruction,
+                        int[] efSearchValues, NeighbourSelection selection, int k, int runs,
                         int maxBase, int maxQueries, Path csv) {
 
         static Args parse(String[] args) {
             Datasets dataset = Datasets.SIFT1M;
+            String impl = "fast";
             int m = 16;
             int efConstruction = 200;
             int[] efSearch = {16, 32, 64, 128, 256, 512};
@@ -98,6 +104,12 @@ public final class HnswCommand {
                         case "gist", "gist1m" -> Datasets.GIST1M;
                         default -> throw new IllegalArgumentException("unknown dataset " + args[i]);
                     };
+                    case "--impl" -> {
+                        impl = args[++i].toLowerCase();
+                        if (!impl.equals("naive") && !impl.equals("fast")) {
+                            throw new IllegalArgumentException("--impl must be naive or fast");
+                        }
+                    }
                     case "--m" -> m = Integer.parseInt(args[++i]);
                     case "--efc" -> efConstruction = Integer.parseInt(args[++i]);
                     case "--ef" -> efSearch = parseInts(args[++i]);
@@ -114,7 +126,7 @@ public final class HnswCommand {
                     default -> throw new IllegalArgumentException("unknown option " + args[i]);
                 }
             }
-            return new Args(dataset, m, efConstruction, efSearch, selection, k, runs,
+            return new Args(dataset, impl, m, efConstruction, efSearch, selection, k, runs,
                     maxBase, maxQueries, csv);
         }
 

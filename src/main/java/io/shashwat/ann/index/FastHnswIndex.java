@@ -32,7 +32,7 @@ import java.util.Set;
  * edges is a multiply, not a load, and the whole list arrives in one or two cache lines.
  * Upper layers are rarer, so they share a single packed arena with a per-node offset.
  */
-public final class FastHnswIndex implements VectorIndex {
+public final class FastHnswIndex implements Hnsw {
 
     private final VectorDataset base;
     private final HnswConfig config;
@@ -101,10 +101,12 @@ public final class FastHnswIndex implements VectorIndex {
         this.rng = new Random(config.seed());
     }
 
+    @Override
     public FastHnswIndex withEfSearch(int efSearch) {
         return new FastHnswIndex(this, efSearch);
     }
 
+    @Override
     public void buildAll(HnswIndex.ProgressListener progress) {
         int n = base.size();
         for (int i = 0; i < n; i++) {
@@ -407,26 +409,32 @@ public final class FastHnswIndex implements VectorIndex {
         return config.metric();
     }
 
+    @Override
     public HnswConfig config() {
         return config;
     }
 
+    @Override
     public int topLayer() {
         return topLayer;
     }
 
+    @Override
     public int entryPoint() {
         return entryPoint;
     }
 
+    @Override
     public long distanceComputations() {
         return distanceComputations;
     }
 
+    @Override
     public int levelOf(int node) {
         return level[node];
     }
 
+    @Override
     public int[] neighboursOf(int node, int layer) {
         if (layer > level[node]) {
             return new int[0];
@@ -439,6 +447,7 @@ public final class FastHnswIndex implements VectorIndex {
         return out;
     }
 
+    @Override
     public long edgeCount() {
         long edges = 0;
         for (int node = 0; node < count; node++) {

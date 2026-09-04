@@ -28,7 +28,7 @@ import java.util.Set;
  * in the right neighbourhood of the next layer down, so the work is logarithmic in n
  * rather than linear.
  */
-public final class HnswIndex implements VectorIndex {
+public final class HnswIndex implements Hnsw {
 
     private final VectorDataset base;
     private final HnswConfig config;
@@ -64,6 +64,7 @@ public final class HnswIndex implements VectorIndex {
     }
 
     /** Inserts every vector of the base set, in file order. */
+    @Override
     public void buildAll(ProgressListener progress) {
         int n = base.size();
         for (int i = 0; i < n; i++) {
@@ -422,6 +423,7 @@ public final class HnswIndex implements VectorIndex {
         return config.metric();
     }
 
+    @Override
     public HnswConfig config() {
         return config;
     }
@@ -431,6 +433,7 @@ public final class HnswIndex implements VectorIndex {
      * not copied — {@code efSearch} is a search-time parameter only, which is what lets one
      * build serve a whole recall/latency curve.
      */
+    @Override
     public HnswIndex withEfSearch(int efSearch) {
         HnswIndex view = new HnswIndex(base, config.withEfSearch(efSearch), graph, nodeLevel);
         view.entryPoint = entryPoint;
@@ -439,24 +442,29 @@ public final class HnswIndex implements VectorIndex {
         return view;
     }
 
+    @Override
     public int topLayer() {
         return topLayer;
     }
 
+    @Override
     public int entryPoint() {
         return entryPoint;
     }
 
+    @Override
     public long distanceComputations() {
         return distanceComputations;
     }
 
     /** Highest layer {@code node} belongs to. */
+    @Override
     public int levelOf(int node) {
         return nodeLevel.get(node);
     }
 
     /** Copy of a node's neighbour list in one layer. For tests and diagnostics only. */
+    @Override
     public int[] neighboursOf(int node, int layer) {
         List<Integer> list = neighbours(node, layer);
         int[] out = new int[list.size()];
@@ -467,6 +475,7 @@ public final class HnswIndex implements VectorIndex {
     }
 
     /** Total number of directed edges, and the number in layer 0. */
+    @Override
     public long edgeCount() {
         long edges = 0;
         for (List<List<Integer>> layers : graph) {

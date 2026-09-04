@@ -1,6 +1,7 @@
 package io.shashwat.ann;
 
 import io.shashwat.ann.bench.HnswCommand;
+import io.shashwat.ann.bench.IvfPqCommand;
 import io.shashwat.ann.bench.OracleCommand;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorSpecies;
@@ -36,6 +37,7 @@ public final class Main {
             }
             case "oracle" -> OracleCommand.run(rest);
             case "hnsw" -> HnswCommand.run(rest);
+            case "ivfpq" -> IvfPqCommand.run(rest);
             default -> {
                 System.err.println("unknown command: " + args[0]);
                 System.err.println(usage());
@@ -54,10 +56,13 @@ public final class Main {
                   env                            print the hardware/JVM banner
                   oracle [--dataset sift|gist] [--k 10] [--queries N]
                                                  exact search, validated against shipped ground truth
-                  hnsw [--dataset sift|gist] [--m 16] [--efc 200] [--ef 16,32,64,...]
+                  hnsw [--dataset sift|gist] [--impl fast|naive] [--m 16] [--efc 200] [--ef 16,32,...]
                        [--selection heuristic|nearestM] [--base N] [--queries N]
                        [--runs 3] [--csv path]
                                                  build one HNSW graph and sweep efSearch
+                  ivfpq [--dataset sift|gist] [--nlist 1024] [--m 16] [--nprobe 1,4,8,...]
+                        [--base N] [--queries N] [--runs 3] [--csv path]
+                                                 build one IVF-PQ index and sweep nprobe
                 """;
     }
 

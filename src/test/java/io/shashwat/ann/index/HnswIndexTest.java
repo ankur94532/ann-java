@@ -7,8 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -55,16 +53,43 @@ class HnswIndexTest {
         return index;
     }
 
-    @ParameterizedTest
-    @EnumSource(NeighbourSelection.class)
-    void findsMostTrueNeighbours(NeighbourSelection selection) {
+    @Test
+    void findsMostTrueNeighbours() {
         VectorDataset base = clustered(1, N, DIM);
         VectorDataset queries = clustered(2, NQ, DIM);
-        HnswIndex index = build(base, HnswConfig.of(16, 200, 128).withSelection(selection));
+        HnswIndex index = build(base, HnswConfig.of(16, 200, 128));
 
         double recall = recallAgainstOracle(index, base, queries);
-        assertTrue(recall > 0.95,
-                selection + " recall was " + recall + ", expected > 0.95");
+        assertTrue(recall > 0.95, "recall was " + recall + ", expected > 0.95");
+    }
+
+    /**
+     * The neighbour-selection ablation, pinned as a test rather than left to Phase 6, so a
+     * later change that quietly breaks the heuristic cannot pass unnoticed.
+     *
+     * <p>On clustered data nearest-M is not slightly worse, it is broken: every node spends
+     * its whole edge budget inside its own cluster, the clusters stop being joined to one
+     * another, and a search is confined to whichever component it enters. The assertion is
+     * on the relationship between the two, not on a magic recall number, because the size of
+     * the gap depends on how clustered the data is.
+     */
+    @Test
+    void theHeuristicBeatsNearestMOnClusteredData() {
+        VectorDataset base = clustered(1, N, DIM);
+        VectorDataset queries = clustered(2, NQ, DIM);
+        HnswConfig config = HnswConfig.of(16, 200, 128);
+
+        HnswIndex heuristic = build(base, config.withSelection(NeighbourSelection.HEURISTIC));
+        HnswIndex nearestM = build(base, config.withSelection(NeighbourSelection.NEAREST_M));
+
+        double heuristicRecall = recallAgainstOracle(heuristic, base, queries);
+        double nearestMRecall = recallAgainstOracle(nearestM, base, queries);
+
+        assertTrue(heuristicRecall > 0.95,
+                "heuristic recall was " + heuristicRecall);
+        assertTrue(nearestMRecall < heuristicRecall - 0.1,
+                "nearest-M recall " + nearestMRecall + " should be far below the heuristic's "
+                        + heuristicRecall + " on clustered data");
     }
 
     @Test
@@ -107,32 +132,40 @@ class HnswIndexTest {
     }
 
     /**
-     * Layer 0 must be one connected component reachable from the entry point. A search
-     * always starts there, so anything in a separate component is unreachable at any
-     * efSearch and is simply lost.
+     * Under the heuristic, layer 0 must be a single component apart from orphans.
+     *
+     * <p>An orphan — a node with no incoming edge at all — is not a bug and is not fixable
+     * by searching harder: nothing points at it, so no search can reach it at any efSearch.
+     * They are outliers. An outlier's own candidates are all clustered far away and much
+     * closer to each other than to it, so the heuristic keeps only one or two of them, and
+     * the back-edges pointing at the outlier are the first thing dropped when those distant
+     * neighbours fill up. What must not happen is <em>fragmentation</em>: a node that has
+     * incoming edges but sits in a component the entry point cannot reach.
      */
-    @ParameterizedTest
-    @EnumSource(NeighbourSelection.class)
-    void layerZeroIsReachableFromTheEntryPoint(NeighbourSelection selection) {
+    @Test
+    void heuristicLayerZeroIsConnectedApartFromOrphans() {
         VectorDataset base = clustered(6, N, DIM);
-        HnswIndex index = build(base, HnswConfig.of(8, 100, 64).withSelection(selection));
+        HnswIndex index = build(base, HnswConfig.of(8, 100, 64));
+        GraphDiagnostics diagnostics = GraphDiagnostics.of(base.size(), index.entryPoint(),
+                node -> index.neighboursOf(node, 0));
 
-        boolean[] seen = new boolean[base.size()];
-        Deque<Integer> stack = new ArrayDeque<>();
-        stack.push(index.entryPoint());
-        seen[index.entryPoint()] = true;
-        int reached = 1;
-        while (!stack.isEmpty()) {
-            for (int n : index.neighboursOf(stack.pop(), 0)) {
-                if (!seen[n]) {
-                    seen[n] = true;
-                    reached++;
-                    stack.push(n);
-                }
-            }
-        }
-        assertEquals(base.size(), reached,
-                selection + ": " + (base.size() - reached) + " nodes unreachable in layer 0");
+        assertEquals(0, diagnostics.fragmented(),
+                "layer 0 split into disconnected components: " + diagnostics);
+        assertTrue(diagnostics.reachableFraction() > 0.999,
+                "too much of layer 0 is unreachable: " + diagnostics);
+    }
+
+    /** The same measurement for nearest-M, which does fragment. */
+    @Test
+    void nearestMFragmentsLayerZero() {
+        VectorDataset base = clustered(6, N, DIM);
+        HnswIndex index = build(base,
+                HnswConfig.of(8, 100, 64).withSelection(NeighbourSelection.NEAREST_M));
+        GraphDiagnostics diagnostics = GraphDiagnostics.of(base.size(), index.entryPoint(),
+                node -> index.neighboursOf(node, 0));
+
+        assertTrue(diagnostics.fragmented() > 0,
+                "nearest-M was expected to leave disconnected components: " + diagnostics);
     }
 
     @Test
