@@ -150,6 +150,20 @@ accumulator inherits that limit no matter how wide its vectors are. **A speedup 
 lane count is never extra parallelism in the SIMD path; it is a serial dependency in the
 baseline that the SIMD path was allowed to break and the scalar loop was not.**
 
+### Two implementations, one graph size
+
+A useful accident of the memory accounting: FAISS's `IndexHNSWFlat` serialises a full
+`IndexFlat` alongside its graph, so its raw serialised size at M=16 is 625.9 MiB. Subtract
+the 488.3 MiB of base vectors that `IndexFlat` holds — which PROTOCOL.md §7 requires anyway,
+since the Java index reports its graph without the vectors it borrows — and FAISS's graph is
+**137.6 MiB against this project's 137.9 MiB, a difference of 0.2%.**
+
+That is not just an accounting fix. Two independent implementations of HNSW, given the same
+M and the same dataset, allocating graph memory within a fifth of a percent of each other is
+a correctness signal: it says both are building a graph with the same degree budget actually
+filled to the same extent, which a subtly wrong pruning rule or an off-by-one in the degree
+cap would not produce.
+
 ### HNSW optimization — [docs/hnsw-optimization.md](docs/hnsw-optimization.md)
 
 Six implementations of the same algorithm, each measured under the same protocol.
