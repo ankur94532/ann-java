@@ -128,7 +128,7 @@ def style_axes(ax, theme, xlabel, ylabel, title, subtitle=None):
 
 
 def draw_series(ax, rows, theme, x_key, y_key, frontier=True, maximise_x=True,
-                minimise_y=True):
+                minimise_y=True, connect=True):
     drawn = []
     for key in ORDER:
         points = rows.get(key)
@@ -138,14 +138,47 @@ def draw_series(ax, rows, theme, x_key, y_key, frontier=True, maximise_x=True,
         colour = theme[hue]
         plotted = (pareto(points, x_key, y_key, maximise_x, minimise_y)
                    if frontier else sorted(points, key=lambda p: p[x_key]))
+        # One point per built index is a scatter, not a curve: joining builds that differ
+        # in M or nlist draws a sawtooth that implies a trajectory nothing travels along.
         ax.plot([p[x_key] for p in plotted], [p[y_key] for p in plotted],
-                linestyle=linestyle, linewidth=2.0, color=colour,
+                linestyle=linestyle if connect else "none", linewidth=2.0, color=colour,
                 marker=marker, markersize=6.5,
                 markerfacecolor=colour if filled else theme["surface"],
                 markeredgecolor=colour, markeredgewidth=1.8,
                 label=label, zorder=3, clip_on=False)
-        drawn.append((label, colour))
+        drawn.append((key, colour, plotted))
     return drawn
+
+
+def label_points(ax, points, theme, key, x_key, y_key, dx=6, dy=0):
+    """Selective direct labels: the parameter that distinguishes the tiers, nothing else.
+
+    Labels are placed away from the point on whichever side the offset points, so a label
+    never lands on top of the next marker along.
+    """
+    for point in points:
+        text = key(point["params"])
+        if text is None:
+            continue
+        ax.annotate(text, (point[x_key], point[y_key]),
+                    textcoords="offset points", xytext=(dx, dy),
+                    fontsize=8, color=theme["muted"],
+                    ha="left" if dx >= 0 else "right", va="center")
+
+
+def degree_of(params):
+    for part in params.split(","):
+        if part.startswith("M="):
+            return part
+    return None
+
+
+def code_of(params):
+    """Just the code size. nlist is what separates the two IVF-PQ tiers on the *build*
+    plot, but on the memory plot it barely moves the size, so labelling it here only
+    produces overlapping text that says nothing."""
+    parts = dict(p.split("=", 1) for p in params.split(",") if "=" in p)
+    return f"m={parts['m']}" if "m" in parts else None
 
 
 def legend(ax, theme, loc="best"):
@@ -168,6 +201,11 @@ def save(fig, out_dir, name, mode, theme):
     plt.close(fig)
     print(f"  {path}")
     return path
+
+
+def seconds(value, _pos):
+    """Log ticks land on 1/2/5 per decade, which in mixed units gives '16.6667 min'."""
+    return f"{value:,.0f} s"
 
 
 def microseconds(value, _pos):
@@ -214,7 +252,15 @@ def plot_recall_memory(rows, out_dir, dataset, mode):
                "index structures only, excluding the raw base vectors")
     ax.set_yscale("log")
     log_ticks(ax, lambda v, _p: f"{v:g}")
-    draw_series(ax, rows, theme, "recall", "index_mib")
+    frontiers = draw_series(ax, rows, theme, "recall", "index_mib")
+    for key, hue, points in frontiers:
+        if key[1] == "hnsw" and key[0] == "java":
+            label_points(ax, points, theme, degree_of, "recall", "index_mib", dx=8)
+        if key[1] == "ivfpq" and key[0] == "java":
+            label_points(ax, points, theme, code_of, "recall", "index_mib", dx=-8)
+    ax.text(0.98, 0.03,
+            "the two HNSW lines coincide — graph memory agrees to 0.2%",
+            transform=ax.transAxes, color=theme["muted"], fontsize=8, ha="right")
     if base_mib:
         ax.axhline(base_mib, color=theme["muted"], linewidth=1.0, linestyle=":", zorder=1)
         ax.text(ax.get_xlim()[1], base_mib * 1.05,
@@ -233,7 +279,7 @@ def plot_build_recall(rows, out_dir, dataset, mode):
                "single-threaded construction; one point per built index, at its best "
                "search setting")
     ax.set_yscale("log")
-    log_ticks(ax, lambda v, _p: f"{v / 60:g} min" if v >= 60 else f"{v:g} s")
+    log_ticks(ax, seconds)
     # One point per distinct build: group by build_seconds and take the best recall.
     grouped = {}
     for key, points in rows.items():
@@ -241,9 +287,10 @@ def plot_build_recall(rows, out_dir, dataset, mode):
         for point in points:
             by_build[round(point["build_s"], 3)].append(point)
         grouped[key] = [{"recall": max(p["recall"] for p in group),
-                         "build_s": build}
+                         "build_s": build,
+                         "params": group[0]["params"]}
                         for build, group in by_build.items()]
-    draw_series(ax, grouped, theme, "recall", "build_s", frontier=False)
+    draw_series(ax, grouped, theme, "recall", "build_s", frontier=False, connect=False)
     legend(ax, theme)
     return save(fig, out_dir, f"build-recall-{dataset.lower()}", mode, theme)
 

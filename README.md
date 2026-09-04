@@ -92,7 +92,106 @@ means "as good as exact", and 1.0 was never on the table.
 
 ---
 
-## Where the FAISS gap comes from
+## The curves
+
+Three plots, generated from the committed CSVs by `scripts/plot_results.py`. Blue is HNSW,
+orange is IVF-PQ; solid is this project, dashed is FAISS. Each line is the Pareto frontier
+of its sweep — configurations beaten on both axes at once are dropped rather than joined by
+a zig-zag implying a trade nobody would choose.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/plots/recall-latency-sift1m-dark.png">
+  <img alt="Recall against latency on SIFT1M. This project's HNSW sits below FAISS's; this project's IVF-PQ sits above FAISS's." src="docs/plots/recall-latency-sift1m-light.png">
+</picture>
+
+The headline. The two blue lines are the HNSW pair and the solid one is below — faster at
+every recall. The two orange lines are the IVF-PQ pair and the solid one is above — slower
+at every recall. **This project wins the graph index and loses the quantized one**, and the
+rest of this README is the explanation of both halves.
+
+Note also where the orange lines stop: IVF-PQ cannot be pushed past recall ≈0.74 at these
+code sizes no matter how much latency it is given, while HNSW runs all the way to the 0.9994
+ceiling. That wall is quantization error, not search effort.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/plots/recall-memory-sift1m-dark.png">
+  <img alt="Recall against index memory on SIFT1M. IVF-PQ occupies 12-37 MiB; HNSW occupies 77-260 MiB." src="docs/plots/recall-memory-sift1m-light.png">
+</picture>
+
+The two families live in different regions and barely compete. IVF-PQ spans 12–37 MiB;
+HNSW spans 77–260 MiB and needs the 488 MiB of raw vectors on top. The HNSW pair is a
+single visible line because the two implementations agree to 0.2%.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/plots/build-recall-sift1m-dark.png">
+  <img alt="Build time against recall on SIFT1M. IVF-PQ builds split into two tiers by nlist." src="docs/plots/build-recall-sift1m-light.png">
+</picture>
+
+One point per built index — a scatter, not a curve, since joining builds that differ in `M`
+or `nlist` would draw a trajectory nothing travels along. This is the plot where the two
+implementations diverge most sharply, and in opposite directions:
+
+| | mine vs FAISS |
+|---|---|
+| HNSW build | **1.09–1.23x faster** |
+| IVF-PQ build | **4.6–8.7x slower** |
+
+The IVF-PQ build is roughly 95% k-means, and the gap has a specific and unglamorous cause:
+**the assignment step is a matrix multiply in disguise.** FAISS computes every
+point-to-centroid distance as a GEMM — `‖x‖² + ‖c‖² − 2·X·Cᵀ` — so each vector is fetched
+once per *block* of centroids and reused across all of them. This implementation issues
+n × k independent distance calls, fetching each vector once per centroid and discarding the
+reuse entirely. At nlist=4096 that is 1.0 × 10¹¹ distance computations: FAISS sustains about
+750 M/s where this code manages about 75 M/s, which is the factor blocking would be expected
+to buy. It is the largest single gap in the project and the best-understood.
+
+## HNSW is faster than FAISS here, and this is why
+
+This project's HNSW beats `IndexHNSWFlat` on latency at all 36 swept configurations, with
+equal or marginally better recall. That is not a credible result for a from-scratch
+implementation against a decade of tuned C++, so it was treated as a defect in the
+comparison until it could be explained. Three checks, in order.
+
+**The graphs are the same.** Corrected for the `IndexFlat` that `IndexHNSWFlat` embeds,
+FAISS's graph is 137.6 MiB at M=16 against this project's 137.9 — 0.2% apart, and within
+0.7% at every M. Two independent implementations filling the same degree budget to the same
+extent.
+
+**The searches do the same work.** `faiss.cvar.hnsw_stats.ndis` counts distance evaluations
+inside HNSW's own search. Per query, at M=16 efC=200:
+
+| efSearch | ndis, mine / FAISS | ns per distance, mine / FAISS | gap |
+|---:|---|---|---:|
+| 16 | 518 / 514 | 63.1 / 71.4 | 8.3 ns |
+| 64 | 1,323 / 1,297 | 69.5 / 82.1 | 12.6 ns |
+| 512 | 6,942 / 6,781 | 76.8 / 112.2 | 35.4 ns |
+
+**This implementation computes about 2% _more_ distances than FAISS and is still faster.**
+The recall edge falls out of the same fact: it finds slightly more true neighbours because
+it examines slightly more candidates, not because its graph is better.
+
+**It is not a crippled FAISS build.** The wheel reports compile options
+`OPTIMIZE DD ARM_NEON MAC_METAL` with the full ASIMD instruction set available. That was the
+obvious explanation and it is wrong.
+
+What is left is execution efficiency, and the shape of the gap says where. A pure
+distance-kernel difference would show a *constant* nanoseconds-per-distance gap. This one
+grows from 13% to 46% as `efSearch` widens — so most of it is not the kernel, it is the
+per-candidate bookkeeping that a wider beam multiplies. That is exactly what
+[docs/hnsw-optimization.md](docs/hnsw-optimization.md) steps 2 and 3 attacked, and their
+measured benefit grew with `efSearch` in the same way (step 3: −8% at ef=16, −17% at
+ef=512). The versioned visited stamps and the primitive `long[]` heaps are worth more the
+harder the search works, and the constant ~8 ns component is where the software prefetch and
+the kernel itself sit.
+
+**The scope of the claim.** Single-threaded, one query per call, on aarch64, against
+`faiss-cpu` 1.15.0. FAISS's batched search paths, its threading, and its x86 AVX-512 kernels
+are all unexercised, and the kernel comparison in particular would likely reverse on an
+AVX-512 host, where FAISS gets 16 lanes and hand-written intrinsics. What this shows is that
+the *algorithm* was implemented correctly and the *execution* was optimised carefully — not
+that FAISS is slow.
+
+## Where the IVF-PQ gap comes from
 
 Measured against `faiss-cpu` 1.15.0, same machine, same protocol, `omp_set_num_threads(1)`,
 same full query set on both sides:

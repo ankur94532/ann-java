@@ -1,0 +1,17 @@
+HNSW distance-computation comparison, Java against FAISS
+SIFT1M, M=16, efConstruction=200, full 10,000-query set, single-threaded
+
+faiss 1.15.0, compile options: OPTIMIZE DD ARM_NEON MAC_METAL
+SIMD available: NEON, ASIMD, ASIMDHP, ASIMDDP, NEON_FP16, NEON_VFPV4, FPHP
+(FAISS is NOT running an unoptimised generic build - NEON is compiled in)
+
+
+   ef  faiss ndis/q   nhops/q  dis/hop  faiss us   ns/dis |  java ndis/q  java us   ns/dis
+   16           514        29     17.5      36.7     71.4 |          518     32.7     63.1
+   32           785        45     17.6      59.8     76.2 |          797     53.2     66.8
+   64         1,297        76     17.1     106.4     82.1 |        1,323     92.0     69.5
+  128         2,236       139     16.1     200.0     89.5 |        2,287    164.7     72.0
+  256         3,901       267     14.6     384.7     98.6 |        3,995    295.7     74.0
+  512         6,781       522     13.0     760.8    112.2 |        6,942    533.2     76.8
+
+Read the ns/dis columns first. If they differ and ndis matches, the gap is the
