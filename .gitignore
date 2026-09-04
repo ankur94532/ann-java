@@ -8,6 +8,10 @@ out/
 *.class
 *.jar
 
+# ...except the Gradle wrapper jar, which must be committed or ./gradlew cannot
+# bootstrap for anyone who clones the repo.
+!gradle/wrapper/gradle-wrapper.jar
+
 # JFR recordings and JMH raw output
 *.jfr
 build/jmh/
