@@ -98,8 +98,24 @@ def measure(index, queries, truth, k, runs):
     return float(np.median(recalls)), float(np.median(means)), float(np.median(p95s))
 
 
-def index_bytes(index):
-    return len(faiss.serialize_index(index))
+def index_bytes(index, base_nbytes, stores_vectors):
+    """Serialised size, with the raw vectors excluded when the index embeds them.
+
+    PROTOCOL.md section 7 compares index *structures*, not storage: the Java HNSW reports
+    its graph without the base vectors it borrows, so FAISS's IndexHNSWFlat - which
+    serialises a full IndexFlat alongside its graph - has to be put on the same footing or
+    the memory plot compares a graph against a graph plus half a gigabyte.
+
+    IndexIVFPQ does not store the vectors, so nothing is subtracted there.
+    """
+    total = len(faiss.serialize_index(index))
+    if not stores_vectors:
+        return total
+    corrected = total - base_nbytes
+    if corrected <= 0:
+        raise ValueError(f"serialised index {total} is smaller than its vectors "
+                         f"{base_nbytes}; the subtraction assumption is wrong")
+    return corrected
 
 
 def row(dataset_label, name, params, k, recall, mean_us, p95_us, build_s, nbytes,
@@ -131,9 +147,10 @@ def sweep_hnsw(base, queries, truth, args, writer):
             t0 = time.perf_counter()
             index.add(base)
             build_s = time.perf_counter() - t0
-            nbytes = index_bytes(index)
+            # IndexHNSWFlat embeds a full IndexFlat; the graph alone is the comparable part.
+            nbytes = index_bytes(index, base.nbytes, stores_vectors=True)
             print(f"  built HNSW M={m} efC={ef_construction} in {build_s:.1f}s "
-                  f"({nbytes / 2**20:.1f} MiB)", flush=True)
+                  f"({nbytes / 2**20:.1f} MiB graph, raw vectors excluded)", flush=True)
             for ef_search in args.ef_values:
                 index.hnsw.efSearch = ef_search
                 recall, mean_us, p95_us = measure(index, queries, truth, args.k, args.runs)
@@ -161,7 +178,8 @@ def sweep_ivfpq(base, queries, truth, args, writer):
             index.train(base)
             index.add(base)
             build_s = time.perf_counter() - t0
-            nbytes = index_bytes(index)
+            # IVFPQ keeps codes, not vectors, so its serialised size is already comparable.
+            nbytes = index_bytes(index, base.nbytes, stores_vectors=False)
             print(f"  built IVFPQ nlist={nlist} m={m} in {build_s:.1f}s "
                   f"({nbytes / 2**20:.1f} MiB)", flush=True)
             for nprobe in args.nprobe_values:
@@ -175,6 +193,22 @@ def sweep_ivfpq(base, queries, truth, args, writer):
                 writer.writerow(row(args.dataset_label, "IndexIVFPQ", params, args.k,
                                     recall, mean_us, p95_us, build_s, nbytes,
                                     base.nbytes, queries.shape[0], args.runs))
+
+
+class FlushingWriter:
+    """A DictWriter that fsyncs nothing but flushes everything, immediately."""
+
+    def __init__(self, writer, handle):
+        self._writer = writer
+        self._handle = handle
+
+    def writeheader(self):
+        self._writer.writeheader()
+        self._handle.flush()
+
+    def writerow(self, row):
+        self._writer.writerow(row)
+        self._handle.flush()
 
 
 def int_list(text):
@@ -213,8 +247,10 @@ def main():
 
     os.makedirs(os.path.dirname(args.csv) or ".", exist_ok=True)
     exists = os.path.exists(args.csv)
-    with open(args.csv, "a", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=CSV_HEADER)
+    # Line-buffered and flushed per row. A multi-hour sweep that dies at hour three should
+    # still have every row it had already measured, the way the Java harness does.
+    with open(args.csv, "a", newline="", buffering=1) as handle:
+        writer = FlushingWriter(csv.DictWriter(handle, fieldnames=CSV_HEADER), handle)
         if not exists:
             writer.writeheader()
         if args.index in ("hnsw", "both"):
