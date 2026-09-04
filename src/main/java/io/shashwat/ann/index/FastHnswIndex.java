@@ -4,10 +4,6 @@ import io.shashwat.ann.distance.Distance;
 import io.shashwat.ann.distance.Metric;
 import io.shashwat.ann.io.VectorDataset;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.PriorityQueue;
 import java.util.Random;
 
 /**
@@ -82,6 +78,15 @@ public final class FastHnswIndex implements Hnsw {
      */
     private int[] visitedStamp;
     private int visitGeneration;
+
+    /** Search scratch, allocated on first use and reused for the life of the object. */
+    private LongMinHeap frontier;
+    private BoundedMaxHeap best;
+    private long[] layerResults;
+    private int[] entryScratch;
+    private int[] selectionScratch;
+    private int[] pruneScratch;
+    private long[] selectionCandidates;
 
     public FastHnswIndex(VectorDataset base, HnswConfig config) {
         this.base = base;
@@ -169,15 +174,12 @@ public final class FastHnswIndex implements Hnsw {
         upperUsed += needed;
     }
 
-    private void setNeighbours(int node, int layer, List<Integer> neighbourIds) {
+    private void setNeighbours(int node, int layer, int[] neighbourIds, int count) {
         int[] arena = arena(layer);
         int slot = degreeSlot(node, layer);
-        int cap = config.maxDegree(layer);
-        int n = Math.min(cap, neighbourIds.size());
+        int n = Math.min(config.maxDegree(layer), count);
         arena[slot] = n;
-        for (int i = 0; i < n; i++) {
-            arena[slot + 1 + i] = neighbourIds.get(i);
-        }
+        System.arraycopy(neighbourIds, 0, arena, slot + 1, n);
     }
 
     private void appendNeighbour(int node, int layer, int neighbour) {
@@ -210,18 +212,21 @@ public final class FastHnswIndex implements Hnsw {
             current = greedyDescend(base.data(), queryOffset, current, layer);
         }
 
-        List<Integer> entryPoints = new ArrayList<>(1);
-        entryPoints.add(current);
+        ensureScratch();
+        entryScratch[0] = current;
+        int entryCount = 1;
         for (int layer = Math.min(topLayer, nodeLevel); layer >= 0; layer--) {
-            List<Candidate> found = searchLayer(base.data(), queryOffset, entryPoints,
-                    config.efConstruction(), layer);
-            List<Integer> selected = select(queryOffset, found, config.maxDegree(layer));
-            link(id, selected, layer);
+            int found = searchLayer(base.data(), queryOffset, entryScratch, entryCount,
+                    config.efConstruction(), layer, layerResults);
+            int selected = select(queryOffset, layerResults, found,
+                    config.maxDegree(layer), selectionScratch);
+            link(id, selectionScratch, selected, layer);
 
-            entryPoints = new ArrayList<>(found.size());
-            for (Candidate c : found) {
-                entryPoints.add(c.id());
+            // Every result of this layer is an entry point for the next one down.
+            for (int i = 0; i < found; i++) {
+                entryScratch[i] = Packing.id(layerResults[i]);
             }
+            entryCount = found;
         }
 
         if (nodeLevel > topLayer) {
@@ -230,28 +235,34 @@ public final class FastHnswIndex implements Hnsw {
         }
     }
 
-    private void link(int id, List<Integer> selected, int layer) {
-        setNeighbours(id, layer, selected);
+    private void link(int id, int[] selected, int selectedCount, int layer) {
+        setNeighbours(id, layer, selected, selectedCount);
 
         int cap = config.maxDegree(layer);
         int[] arena = arena(layer);
-        for (int neighbour : selected) {
+        for (int s = 0; s < selectedCount; s++) {
+            int neighbour = selected[s];
             int slot = degreeSlot(neighbour, layer);
             int deg = arena[slot];
             if (deg < cap) {
                 appendNeighbour(neighbour, layer, id);
                 continue;
             }
-            // Full: re-select over the existing neighbours plus the new edge.
+            // Full: re-select over the existing neighbours plus the new edge. Not "drop the
+            // farthest" - under the heuristic the farthest neighbour may be the only edge
+            // covering its direction, and dropping it is what disconnects a graph.
             int neighbourOffset = base.offset(neighbour);
-            List<Candidate> candidates = new ArrayList<>(deg + 1);
             for (int i = 0; i < deg; i++) {
                 int other = arena[slot + 1 + i];
-                candidates.add(new Candidate(other, distance(base.data(), neighbourOffset, other)));
+                selectionCandidates[i] =
+                        Packing.pack(distance(base.data(), neighbourOffset, other), other);
             }
-            candidates.add(new Candidate(id, distance(base.data(), neighbourOffset, id)));
-            candidates.sort(NEAREST_FIRST);
-            setNeighbours(neighbour, layer, select(neighbourOffset, candidates, cap));
+            selectionCandidates[deg] =
+                    Packing.pack(distance(base.data(), neighbourOffset, id), id);
+            java.util.Arrays.sort(selectionCandidates, 0, deg + 1);
+            int kept = select(neighbourOffset, selectionCandidates, deg + 1, cap,
+                    pruneScratch);
+            setNeighbours(neighbour, layer, pruneScratch, kept);
         }
     }
 
@@ -272,16 +283,16 @@ public final class FastHnswIndex implements Hnsw {
             current = greedyDescend(query, queryOffset, current, layer);
         }
 
-        List<Integer> entryPoints = new ArrayList<>(1);
-        entryPoints.add(current);
-        List<Candidate> found = searchLayer(query, queryOffset, entryPoints,
-                Math.max(config.efSearch(), k), 0);
+        ensureScratch();
+        entryScratch[0] = current;
+        int found = searchLayer(query, queryOffset, entryScratch, 1,
+                Math.max(config.efSearch(), k), 0, layerResults);
 
-        int n = Math.min(k, found.size());
+        int n = Math.min(k, found);
         for (int i = 0; i < n; i++) {
-            outIds[i] = found.get(i).id();
+            outIds[i] = Packing.id(layerResults[i]);
             if (outDistances != null) {
-                outDistances[i] = found.get(i).distance();
+                outDistances[i] = Packing.distance(layerResults[i]);
             }
         }
         return n;
@@ -338,30 +349,51 @@ public final class FastHnswIndex implements Hnsw {
         visitGeneration++;
     }
 
-    private List<Candidate> searchLayer(float[] query, int queryOffset,
-                                        List<Integer> entryPoints, int ef, int layer) {
+    /**
+     * Best-first search of one layer. Writes the {@code ef} closest nodes found into
+     * {@code out} as packed (distance, id) longs, nearest first.
+     *
+     * <p>{@code frontier} is the min-heap of discovered-but-not-expanded nodes, popped
+     * nearest-first. {@code best} is the max-heap of the best {@code ef} answers so far,
+     * whose root is the <em>worst</em> of them so that "is this worth keeping?" is one
+     * comparison.
+     *
+     * <p><b>Termination.</b> The loop stops when the nearest unexpanded node is farther
+     * than the worst kept result. The frontier is popped in increasing distance, so at that
+     * moment every remaining candidate is also farther, and the graph's edges are assumed
+     * to lead only to points not much nearer — so no unexpanded branch can improve the
+     * result set. That assumption is a property of a well-built proximity graph rather than
+     * a theorem, and it is precisely where HNSW's recall loss comes from.
+     *
+     * <p>{@code ef} is therefore not "how many results to return". It is how much worse
+     * than the current best a node may be and still be worth exploring: a larger {@code ef}
+     * keeps a worse worst-result, which raises the termination bar, which lets the search
+     * cross a ridge of slightly-worse nodes to reach a better basin behind it.
+     *
+     * @return how many entries were written to {@code out}
+     */
+    private int searchLayer(float[] query, int queryOffset, int[] entryPoints, int entryCount,
+                            int ef, int layer, long[] out) {
         newVisitGeneration();
-        PriorityQueue<Candidate> candidates = new PriorityQueue<>(NEAREST_FIRST);
-        PriorityQueue<Candidate> results = new PriorityQueue<>(NEAREST_FIRST.reversed());
+        frontier.clear();
+        best.reset(ef);
 
-        for (int entry : entryPoints) {
+        for (int i = 0; i < entryCount; i++) {
+            int entry = entryPoints[i];
             if (visit(entry)) {
                 float d = distance(query, queryOffset, entry);
-                candidates.add(new Candidate(entry, d));
-                results.add(new Candidate(entry, d));
+                frontier.push(d, entry);
+                best.offer(d, entry);
             }
         }
-        while (results.size() > ef) {
-            results.poll();
-        }
 
-        while (!candidates.isEmpty()) {
-            Candidate nearest = candidates.poll();
-            if (results.size() >= ef && NEAREST_FIRST.compare(nearest, results.peek()) > 0) {
+        while (!frontier.isEmpty()) {
+            long nearest = frontier.pop();
+            if (best.isFull() && nearest > best.worstPacked()) {
                 break;
             }
             int[] arena = arena(layer);
-            int slot = degreeSlot(nearest.id(), layer);
+            int slot = degreeSlot(Packing.id(nearest), layer);
             int deg = arena[slot];
             for (int i = 1; i <= deg; i++) {
                 int neighbour = arena[slot + i];
@@ -369,53 +401,66 @@ public final class FastHnswIndex implements Hnsw {
                     continue;
                 }
                 float d = distance(query, queryOffset, neighbour);
-                if (results.size() < ef || d < results.peek().distance()) {
-                    Candidate c = new Candidate(neighbour, d);
-                    candidates.add(c);
-                    results.add(c);
-                    if (results.size() > ef) {
-                        results.poll();
-                    }
+                // Strictly closer than the worst kept, matching HnswIndex exactly: a node
+                // exactly tied with the worst is not explored, whatever its id.
+                if (!best.isFull() || d < best.worstDistance()) {
+                    frontier.push(d, neighbour);
+                    best.offer(d, neighbour);
                 }
             }
         }
+        return best.drainAscendingPacked(out);
+    }
 
-        List<Candidate> out = new ArrayList<>(results);
-        out.sort(NEAREST_FIRST);
-        return out;
+    /** Allocates the reusable search scratch on first use. */
+    private void ensureScratch() {
+        if (frontier == null) {
+            int width = Math.max(config.efConstruction(), Math.max(config.efSearch(), m0));
+            frontier = new LongMinHeap(1024);
+            best = BoundedMaxHeap.withMaxCapacity(width);
+            layerResults = new long[width];
+            entryScratch = new int[width];
+            selectionScratch = new int[Math.max(m0, width)];
+            pruneScratch = new int[Math.max(m0, width)];
+            selectionCandidates = new long[Math.max(m0 + 1, width)];
+        }
     }
 
     // ---------------------------------------------------------------- neighbour selection
 
-    private List<Integer> select(int queryOffset, List<Candidate> candidates, int max) {
+    /**
+     * Chooses which of {@code candidates} (packed, nearest first) to keep an edge to,
+     * writing their ids into {@code kept}.
+     *
+     * @return how many were kept
+     */
+    private int select(int queryOffset, long[] candidates, int count, int max, int[] kept) {
         return switch (config.selection()) {
             case NEAREST_M -> {
-                int n = Math.min(max, candidates.size());
-                List<Integer> kept = new ArrayList<>(n);
+                int n = Math.min(max, count);
                 for (int i = 0; i < n; i++) {
-                    kept.add(candidates.get(i).id());
+                    kept[i] = Packing.id(candidates[i]);
                 }
-                yield kept;
+                yield n;
             }
             case HEURISTIC -> {
-                List<Integer> kept = new ArrayList<>(max);
-                for (Candidate candidate : candidates) {
-                    if (kept.size() >= max) {
-                        break;
-                    }
-                    int candidateOffset = base.offset(candidate.id());
+                int keptCount = 0;
+                for (int i = 0; i < count && keptCount < max; i++) {
+                    int candidateId = Packing.id(candidates[i]);
+                    float candidateDistance = Packing.distance(candidates[i]);
+                    int candidateOffset = base.offset(candidateId);
                     boolean redundant = false;
-                    for (int keptId : kept) {
-                        if (distance(base.data(), candidateOffset, keptId) < candidate.distance()) {
+                    for (int j = 0; j < keptCount; j++) {
+                        if (distance(base.data(), candidateOffset, kept[j]) < candidateDistance) {
                             redundant = true;
                             break;
                         }
                     }
                     if (!redundant) {
-                        kept.add(candidate.id());
+                        kept[keptCount++] = candidateId;
                     }
                 }
-                yield kept;
+                yield keptCount;
             }
         };
     }
@@ -427,12 +472,6 @@ public final class FastHnswIndex implements Hnsw {
         return Distance.compute(config.metric(), query, queryOffset,
                 base.data(), base.offset(node), dim);
     }
-
-    private record Candidate(int id, float distance) {
-    }
-
-    private static final Comparator<Candidate> NEAREST_FIRST =
-            Comparator.comparingDouble(Candidate::distance).thenComparingInt(Candidate::id);
 
     // ---------------------------------------------------------------- reporting
 
