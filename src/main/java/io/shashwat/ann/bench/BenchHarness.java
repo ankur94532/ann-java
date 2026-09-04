@@ -54,10 +54,13 @@ public final class BenchHarness {
             recalls[run] = Recall.mean(found, k, truth.data(), truth.dim(), nq, k);
         }
 
+        // base_bytes is the raw size of the indexed vectors, matching FAISS's base.nbytes:
+        // it is the denominator of the compression ratio in the memory plot.
+        long baseBytes = (long) index.size() * index.dim() * Float.BYTES;
         return new Measurement(
                 "java", dataset, index.name(), params, k,
                 median(recalls), median(meanUs), median(p95Us),
-                buildSeconds, indexBytes, queries.rawBytes(), nq, runs,
+                buildSeconds, indexBytes, baseBytes, nq, runs,
                 Instant.now().toString());
     }
 

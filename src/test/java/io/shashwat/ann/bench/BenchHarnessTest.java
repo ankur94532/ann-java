@@ -43,6 +43,8 @@ class BenchHarnessTest {
         assertEquals(30, m.queries());
         assertEquals(3, m.runs());
         assertEquals(1.25, m.buildSeconds());
+        assertEquals(500L * 8 * Float.BYTES, m.baseBytes(),
+                "base_bytes must describe the indexed vectors, not the query set");
         assertTrue(m.meanLatencyUs() > 0);
         assertTrue(m.p95LatencyUs() >= m.meanLatencyUs() * 0.5,
                 "p95 " + m.p95LatencyUs() + " should be in the same range as mean "

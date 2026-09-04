@@ -1,8 +1,10 @@
 package io.shashwat.ann;
 
+import io.shashwat.ann.bench.AnalysisCommand;
 import io.shashwat.ann.bench.HnswCommand;
 import io.shashwat.ann.bench.IvfPqCommand;
 import io.shashwat.ann.bench.OracleCommand;
+import io.shashwat.ann.bench.SweepCommand;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorSpecies;
 
@@ -38,6 +40,8 @@ public final class Main {
             case "oracle" -> OracleCommand.run(rest);
             case "hnsw" -> HnswCommand.run(rest);
             case "ivfpq" -> IvfPqCommand.run(rest);
+            case "sweep" -> SweepCommand.run(rest);
+            case "analyse" -> AnalysisCommand.run(rest);
             default -> {
                 System.err.println("unknown command: " + args[0]);
                 System.err.println(usage());
@@ -63,6 +67,10 @@ public final class Main {
                   ivfpq [--dataset sift|gist] [--nlist 1024] [--m 16] [--nprobe 1,4,8,...]
                         [--base N] [--queries N] [--runs 3] [--csv path]
                                                  build one IVF-PQ index and sweep nprobe
+                  sweep [--dataset sift|gist] [--index hnsw|ivfpq|both] [--csv path]
+                                                 the full Phase 5 parameter sweep, resumable
+                  analyse [--dataset sift|gist] [--index hnsw|ivfpq] [--csv path]
+                                                 per-query recall and neighbourhood geometry
                 """;
     }
 

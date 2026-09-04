@@ -17,6 +17,12 @@ class IvfPqIndexTest {
     private static final int NQ = 200;
     private static final int K = 10;
 
+    /**
+     * Clusters that <em>overlap</em>. Well-separated clusters would make this a bad test
+     * bed: the coarse quantizer would land one cluster per list, a query's ten true
+     * neighbours would all sit in the single nearest list, and recall would be flat in
+     * nprobe — which is exactly the behaviour the nprobe test is trying to observe.
+     */
     private static VectorDataset clustered(long seed, int n, int dim) {
         Random rnd = new Random(seed);
         int clusters = 40;
@@ -30,7 +36,7 @@ class IvfPqIndexTest {
         for (int v = 0; v < n; v++) {
             float[] centre = centres[rnd.nextInt(clusters)];
             for (int i = 0; i < dim; i++) {
-                data[v * dim + i] = centre[i] + (float) rnd.nextGaussian() * 5f;
+                data[v * dim + i] = centre[i] + (float) rnd.nextGaussian() * 25f;
             }
         }
         return new VectorDataset(data, n, dim);

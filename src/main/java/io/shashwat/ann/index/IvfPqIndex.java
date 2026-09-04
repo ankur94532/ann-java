@@ -82,23 +82,62 @@ public final class IvfPqIndex implements VectorIndex {
 
     // ---------------------------------------------------------------- build
 
+    /**
+     * The coarse quantizer, separated out so that a sweep over {@code m} at fixed
+     * {@code nlist} does not retrain identical centroids several times over.
+     *
+     * <p>{@code trainSeconds} travels with the centroids precisely so that reuse cannot
+     * flatter the build-time numbers: a reused quantizer still charges every configuration
+     * the full cost of training it, which is what a from-scratch build would have paid.
+     */
+    public record CoarseQuantizer(float[] centroids, int nlist, int dim, long seed,
+                                  int trainingSize, int iterations, double trainSeconds) {
+
+        public boolean matches(IvfPqConfig config, int baseSize, int baseDim) {
+            return nlist == config.nlist()
+                    && dim == baseDim
+                    && seed == config.seed()
+                    && iterations == config.trainIterations()
+                    && trainingSize == config.coarseTrainingSize(baseSize);
+        }
+    }
+
+    public static CoarseQuantizer trainCoarseQuantizer(VectorDataset base, IvfPqConfig config,
+                                                       BuildProgressListener progress) {
+        int n = base.size();
+        int dim = base.dim();
+        int trainingSize = config.coarseTrainingSize(n);
+        report(progress, "coarse k-means on " + trainingSize + " of " + n
+                + " vectors, nlist=" + config.nlist());
+        long t0 = System.nanoTime();
+        float[] training = sample(base, trainingSize, new Random(config.seed()));
+        KMeans.Result coarse = KMeans.fit(training, trainingSize, dim, config.nlist(),
+                config.trainIterations(), config.seed(),
+                (iteration, max, inertia) -> report(progress,
+                        String.format("  coarse iteration %d/%d, inertia %.4g",
+                                iteration, max, inertia)));
+        double seconds = (System.nanoTime() - t0) / 1e9;
+        return new CoarseQuantizer(coarse.centroids(), config.nlist(), dim, config.seed(),
+                trainingSize, config.trainIterations(), seconds);
+    }
+
     public static IvfPqIndex build(VectorDataset base, IvfPqConfig config,
+                                   BuildProgressListener progress) {
+        return build(base, config, trainCoarseQuantizer(base, config, progress), progress);
+    }
+
+    public static IvfPqIndex build(VectorDataset base, IvfPqConfig config,
+                                   CoarseQuantizer coarseQuantizer,
                                    BuildProgressListener progress) {
         int n = base.size();
         int dim = base.dim();
         Random rng = new Random(config.seed());
 
-        // --- coarse quantizer -------------------------------------------------------
-        int coarseTrainingSize = config.coarseTrainingSize(n);
-        report(progress, "coarse k-means on " + coarseTrainingSize + " of " + n
-                + " vectors, nlist=" + config.nlist());
-        float[] coarseTraining = sample(base, coarseTrainingSize, rng);
-        KMeans.Result coarse = KMeans.fit(coarseTraining, coarseTrainingSize, dim,
-                config.nlist(), config.trainIterations(), config.seed(),
-                (iteration, max, inertia) -> report(progress,
-                        String.format("  coarse iteration %d/%d, inertia %.4g",
-                                iteration, max, inertia)));
-        float[] centroids = coarse.centroids();
+        if (!coarseQuantizer.matches(config, n, dim)) {
+            throw new IllegalArgumentException(
+                    "the supplied coarse quantizer was not trained for this configuration");
+        }
+        float[] centroids = coarseQuantizer.centroids();
 
         // --- assign every base vector to a list -------------------------------------
         report(progress, "assigning " + n + " vectors to lists");
