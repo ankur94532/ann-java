@@ -62,12 +62,17 @@ public final class HnswCommand {
         try (CsvSink sink = a.csv() == null ? null : new CsvSink(a.csv())) {
             for (int efSearch : a.efSearchValues()) {
                 Hnsw configured = index.withEfSearch(efSearch);
+                configured.resetDistanceComputations();
                 Measurement m = BenchHarness.measure(
                         data.label(), configured,
                         configured.config().shortName(),
                         data.queries(), data.groundTruth(), a.k(), a.runs(),
                         buildSeconds, index.estimatedBytes());
-                System.out.println("  " + m);
+                // Includes the warm-up pass and all three measured passes.
+                long perQuery = configured.distanceComputations()
+                        / (long) (data.queries().size() * a.runs()
+                                  + Math.min(1000, data.queries().size()));
+                System.out.printf("  %s  %,d distances/query%n", m, perQuery);
                 results.add(m);
                 if (sink != null) {
                     sink.write(m);

@@ -22,6 +22,12 @@ public interface Hnsw extends VectorIndex {
 
     long distanceComputations();
 
+    /**
+     * Zeroes the distance counter, so that a measured phase can be attributed separately
+     * from construction.
+     */
+    void resetDistanceComputations();
+
     default GraphDiagnostics diagnostics() {
         return GraphDiagnostics.of(size(), entryPoint(), node -> neighboursOf(node, 0));
     }

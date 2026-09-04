@@ -6,11 +6,9 @@ import io.shashwat.ann.io.VectorDataset;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 import java.util.PriorityQueue;
 import java.util.Random;
-import java.util.Set;
 
 /**
  * The optimized HNSW. Algorithmically identical to {@link HnswIndex} — same level draws,
@@ -31,6 +29,18 @@ import java.util.Set;
  * fixed-stride array indexed arithmetically ({@code node * stride}), so finding a node's
  * edges is a multiply, not a load, and the whole list arrives in one or two cache lines.
  * Upper layers are rarer, so they share a single packed arena with a per-node offset.
+ *
+ * <p><b>Step 2: a versioned stamp array for the visited set.</b> {@code HashSet<Integer>}
+ * charged an allocation, a box, a hash and a probe for every node the beam looked at, and
+ * a fresh {@code HashSet} per layer per query on top. Here the visited set is one
+ * {@code int} per node holding the number of the search that last touched it; "have I seen
+ * this?" is one array read and one compare, and clearing the set for the next search is
+ * incrementing a counter rather than touching a million entries.
+ *
+ * <p>The array is 4 MiB at a million nodes and is allocated lazily, but insertion runs the
+ * same layer search that queries do, so it is allocated during the build and does show up
+ * in the build-time memory measurement. It is scratch rather than index and is excluded
+ * from {@link #estimatedBytes()}; the 4 MiB gap between the two figures is this array.
  */
 public final class FastHnswIndex implements Hnsw {
 
@@ -66,6 +76,13 @@ public final class FastHnswIndex implements Hnsw {
     private final Random rng;
     private long distanceComputations;
 
+    /**
+     * Per-node stamp of the search that last visited it, and the current search's number.
+     * A node counts as visited when its stamp equals {@link #visitGeneration}.
+     */
+    private int[] visitedStamp;
+    private int visitGeneration;
+
     public FastHnswIndex(VectorDataset base, HnswConfig config) {
         this.base = base;
         this.config = config;
@@ -99,6 +116,8 @@ public final class FastHnswIndex implements Hnsw {
         this.topLayer = source.topLayer;
         this.count = source.count;
         this.rng = new Random(config.seed());
+        // visitedStamp is deliberately not shared: it is per-search scratch, and two views
+        // of the same graph must not be able to see each other's generation counter.
     }
 
     @Override
@@ -291,14 +310,42 @@ public final class FastHnswIndex implements Hnsw {
         return current;
     }
 
+    /**
+     * Marks {@code node} visited for the current search.
+     *
+     * @return true if it had not been visited yet
+     */
+    private boolean visit(int node) {
+        if (visitedStamp[node] == visitGeneration) {
+            return false;
+        }
+        visitedStamp[node] = visitGeneration;
+        return true;
+    }
+
+    /**
+     * Starts a new search generation. On the one iteration in two billion where the counter
+     * would wrap back onto a live stamp, the array is cleared and numbering restarts.
+     */
+    private void newVisitGeneration() {
+        if (visitedStamp == null) {
+            visitedStamp = new int[Math.max(1, base.size())];
+        }
+        if (visitGeneration == Integer.MAX_VALUE) {
+            java.util.Arrays.fill(visitedStamp, 0);
+            visitGeneration = 0;
+        }
+        visitGeneration++;
+    }
+
     private List<Candidate> searchLayer(float[] query, int queryOffset,
                                         List<Integer> entryPoints, int ef, int layer) {
-        Set<Integer> visited = new HashSet<>();
+        newVisitGeneration();
         PriorityQueue<Candidate> candidates = new PriorityQueue<>(NEAREST_FIRST);
         PriorityQueue<Candidate> results = new PriorityQueue<>(NEAREST_FIRST.reversed());
 
         for (int entry : entryPoints) {
-            if (visited.add(entry)) {
+            if (visit(entry)) {
                 float d = distance(query, queryOffset, entry);
                 candidates.add(new Candidate(entry, d));
                 results.add(new Candidate(entry, d));
@@ -318,7 +365,7 @@ public final class FastHnswIndex implements Hnsw {
             int deg = arena[slot];
             for (int i = 1; i <= deg; i++) {
                 int neighbour = arena[slot + i];
-                if (!visited.add(neighbour)) {
+                if (!visit(neighbour)) {
                     continue;
                 }
                 float d = distance(query, queryOffset, neighbour);
@@ -427,6 +474,11 @@ public final class FastHnswIndex implements Hnsw {
     @Override
     public long distanceComputations() {
         return distanceComputations;
+    }
+
+    @Override
+    public void resetDistanceComputations() {
+        distanceComputations = 0;
     }
 
     @Override

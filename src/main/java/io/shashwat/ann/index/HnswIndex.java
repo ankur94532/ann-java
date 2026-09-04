@@ -457,6 +457,11 @@ public final class HnswIndex implements Hnsw {
         return distanceComputations;
     }
 
+    @Override
+    public void resetDistanceComputations() {
+        distanceComputations = 0;
+    }
+
     /** Highest layer {@code node} belongs to. */
     @Override
     public int levelOf(int node) {
