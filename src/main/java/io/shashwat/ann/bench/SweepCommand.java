@@ -232,7 +232,7 @@ public final class SweepCommand {
             int trainIterations = 25;
             int pointsPerCentroid = 256;
             io.shashwat.ann.index.KMeans.Init init =
-                    io.shashwat.ann.index.KMeans.Init.KMEANS_PLUS_PLUS;
+                    io.shashwat.ann.index.KMeans.Init.RANDOM_SAMPLE;
             int k = 10;
             int runs = 3;
             int maxQueries = Integer.MAX_VALUE;

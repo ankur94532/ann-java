@@ -74,7 +74,7 @@ public final class AnalysisCommand {
             label = config.shortName();
         } else {
             IvfPqConfig config = new IvfPqConfig(a.nlist(), a.pqM(), a.nprobe(), 25, 256,
-                    io.shashwat.ann.index.KMeans.Init.KMEANS_PLUS_PLUS, Metric.L2, 42L);
+                    io.shashwat.ann.index.KMeans.Init.RANDOM_SAMPLE, Metric.L2, 42L);
             System.out.printf("building     : ivfpq %s%n", config.shortName());
             long t0 = System.nanoTime();
             index = IvfPqIndex.build(data.base(), config,

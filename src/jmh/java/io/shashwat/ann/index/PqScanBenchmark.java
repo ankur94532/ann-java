@@ -52,6 +52,10 @@ public class PqScanBenchmark {
     private float[] query;
     private float[] table;
 
+    /** A list's worth of codes: 1M vectors over 1024 lists is about 1000 per list. */
+    private static final int LIST_LENGTH = 1000;
+    private byte[] codes;
+
     @Setup
     public void setup() {
         Random rnd = new Random(4242 + m);
@@ -67,6 +71,12 @@ public class PqScanBenchmark {
         table = new float[m * KSUB];
 
         // Dimension-major within each subspace: (j*subDim + d)*KSUB + c.
+        codes = new byte[LIST_LENGTH * m];
+        rnd.nextBytes(codes);
+        for (int i = 0; i < table.length; i++) {
+            table[i] = rnd.nextFloat() * 100;
+        }
+
         codebooksT = new float[m * subDim * KSUB];
         for (int j = 0; j < m; j++) {
             for (int c = 0; c < KSUB; c++) {
@@ -156,5 +166,51 @@ public class PqScanBenchmark {
             }
         }
         return table;
+    }
+
+    // ---- scanning a list once the table is built ------------------------------------
+
+    /** One accumulator: every addition waits on the previous one. */
+    @Benchmark
+    public float scanSerialAccumulator() {
+        float best = Float.MAX_VALUE;
+        for (int i = 0, off = 0; i < LIST_LENGTH; i++, off += m) {
+            float sum = 0;
+            for (int j = 0; j < m; j++) {
+                sum += table[j * KSUB + (codes[off + j] & 0xff)];
+            }
+            if (sum < best) {
+                best = sum;
+            }
+        }
+        return best;
+    }
+
+    /** Four independent accumulators, as shipped. */
+    @Benchmark
+    public float scanFourAccumulators() {
+        float best = Float.MAX_VALUE;
+        int bound = m & ~3;
+        for (int i = 0, off = 0; i < LIST_LENGTH; i++, off += m) {
+            float s0 = 0;
+            float s1 = 0;
+            float s2 = 0;
+            float s3 = 0;
+            int j = 0;
+            for (; j < bound; j += 4) {
+                s0 += table[j * KSUB + (codes[off + j] & 0xff)];
+                s1 += table[(j + 1) * KSUB + (codes[off + j + 1] & 0xff)];
+                s2 += table[(j + 2) * KSUB + (codes[off + j + 2] & 0xff)];
+                s3 += table[(j + 3) * KSUB + (codes[off + j + 3] & 0xff)];
+            }
+            for (; j < m; j++) {
+                s0 += table[j * KSUB + (codes[off + j] & 0xff)];
+            }
+            float sum = (s0 + s1) + (s2 + s3);
+            if (sum < best) {
+                best = sum;
+            }
+        }
+        return best;
     }
 }

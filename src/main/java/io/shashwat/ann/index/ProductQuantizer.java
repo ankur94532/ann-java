@@ -78,8 +78,7 @@ public final class ProductQuantizer {
     public static ProductQuantizer train(float[] data, int n, int dim, int m,
                                          int iterations, long seed,
                                          SubspaceProgressListener progress) {
-        return train(data, n, dim, m, iterations, seed, KMeans.Init.KMEANS_PLUS_PLUS,
-                progress);
+        return train(data, n, dim, m, iterations, seed, KMeans.Init.RANDOM_SAMPLE, progress);
     }
 
     public static ProductQuantizer train(float[] data, int n, int dim, int m,
@@ -228,7 +227,21 @@ public final class ProductQuantizer {
         }
     }
 
-    /** Sums the {@code m} table entries a code selects. */
+    /**
+     * Sums the {@code m} table entries a code selects.
+     *
+     * <p>One accumulator, deliberately. The obvious optimisation here is four independent
+     * accumulators, on the reasoning that {@code sum +=} builds an FP-add dependency chain
+     * of length {@code m} — which is exactly the defect that costs the scalar L2 kernel a
+     * factor of 2.6 in {@code docs/kernels.md}. Measured, it buys nothing: 6.84 µs against
+     * 6.86 µs per thousand codes at m=16, and it is slower at m=8.
+     *
+     * <p>The reason the analogy fails is that the caller's loop over the codes in a list has
+     * no dependency between iterations, so the processor already has many independent chains
+     * in flight and does not need the extra ones. The loop is bound by load throughput —
+     * two loads per lookup, a code byte and a table float — not by add latency. The scalar
+     * L2 kernel had no such outer loop to hide behind.
+     */
     public float distanceFromTable(byte[] codes, int codeOffset, float[] table) {
         float sum = 0;
         for (int j = 0; j < m; j++) {

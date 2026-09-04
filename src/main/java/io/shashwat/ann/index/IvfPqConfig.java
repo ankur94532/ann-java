@@ -18,10 +18,13 @@ import io.shashwat.ann.distance.Metric;
  *                           defaults to 25; IndexIVFPQ's coarse clustering defaults to only
  *                           10, so scripts/faiss_bench.py raises it to 25 explicitly and
  *                           both sides train for the same number of iterations.
- * @param init               centroid seeding. FAISS defaults to a random subsample; this
- *                           defaults to k-means++, which is a larger training budget, so
- *                           the difference is measured as an ablation rather than assumed
- *                           to be free.
+ * @param init               centroid seeding. Defaults to {@code RANDOM_SAMPLE}, which is
+ *                           what FAISS's {@code IndexIVFPQ} uses ({@code init_method = 0}),
+ *                           so the comparison isolates the implementation rather than the
+ *                           training budget. Measured on SIFT1M at nlist=1024, m=16, the
+ *                           two seedings give recall@10 of 0.5741 (random) against 0.5691
+ *                           (k-means++) at nprobe=64 — k-means++ is slightly *worse* here,
+ *                           so nothing is being given up by matching FAISS.
  * @param pointsPerCentroid  training-set size per centroid, capped against the base size.
  *                           256 also matches FAISS's default.
  */
@@ -50,7 +53,7 @@ public record IvfPqConfig(int nlist, int m, int nprobe, int trainIterations,
 
     public static IvfPqConfig of(int nlist, int m, int nprobe) {
         return new IvfPqConfig(nlist, m, nprobe, 25, 256,
-                KMeans.Init.KMEANS_PLUS_PLUS, Metric.L2, 42L);
+                KMeans.Init.RANDOM_SAMPLE, Metric.L2, 42L);
     }
 
     public IvfPqConfig withNprobe(int newNprobe) {
@@ -76,6 +79,6 @@ public record IvfPqConfig(int nlist, int m, int nprobe, int trainIterations,
 
     public String shortName() {
         return "nlist=" + nlist + ",m=" + m + ",nprobe=" + nprobe
-                + (init == KMeans.Init.KMEANS_PLUS_PLUS ? "" : ",init=random");
+                + (init == KMeans.Init.RANDOM_SAMPLE ? "" : ",init=kmeans++");
     }
 }

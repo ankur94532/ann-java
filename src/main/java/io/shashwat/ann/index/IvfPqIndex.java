@@ -312,9 +312,19 @@ public final class IvfPqIndex implements VectorIndex {
             subtract(query, queryOffset, centroids, list * dim, queryResidual, dim);
             pq.computeLookupTable(queryResidual, 0, lookupTable);
             long t1 = phaseTiming ? System.nanoTime() : 0;
+            // Guard the heap with a plain float compare. offer() packs the (distance, id)
+            // pair before it can decide to reject it, and at nprobe=64 this loop rejects
+            // some 62,000 candidates per query, so the packing is nearly all wasted. The
+            // worst-kept distance only changes when a candidate is accepted, so it is held
+            // in a local rather than re-read from the heap every iteration.
+            float worst = results.isFull() ? results.worstDistance() : Float.POSITIVE_INFINITY;
             for (int slot = from; slot < to; slot++) {
-                results.offer(pq.distanceFromTable(listCodes, slot * m, lookupTable),
-                        listIds[slot]);
+                float d = pq.distanceFromTable(listCodes, slot * m, lookupTable);
+                if (d < worst) {
+                    results.offer(d, listIds[slot]);
+                    worst = results.isFull() ? results.worstDistance()
+                            : Float.POSITIVE_INFINITY;
+                }
             }
             if (phaseTiming) {
                 long t2 = System.nanoTime();
