@@ -86,6 +86,38 @@ class KMeansTest {
                 "the same seed must give the same clustering");
     }
 
+    /**
+     * Random-sample seeding must work, and must be reproducible, because it is the setting
+     * that matches FAISS's default and so the setting any honest recall comparison uses.
+     */
+    @Test
+    void randomSampleInitSeedsFromDistinctTrainingPoints() {
+        int n = 400;
+        int dim = 5;
+        int k = 32;
+        Random rnd = new Random(21);
+        float[] data = new float[n * dim];
+        for (int i = 0; i < data.length; i++) {
+            data[i] = rnd.nextFloat() * 10;
+        }
+
+        KMeans.Result a = KMeans.fit(data, n, dim, k, 25, 3L, KMeans.Init.RANDOM_SAMPLE, null);
+        KMeans.Result b = KMeans.fit(data, n, dim, k, 25, 3L, KMeans.Init.RANDOM_SAMPLE, null);
+        assertEquals(a.inertia(), b.inertia(), 1e-9, "the same seed must reproduce");
+
+        int[] counts = new int[k];
+        for (int assignment : a.assignments()) {
+            counts[assignment]++;
+        }
+        for (int c = 0; c < k; c++) {
+            assertTrue(counts[c] > 0, "centroid " + c + " owns nothing");
+        }
+
+        KMeans.Result plusPlus = KMeans.fit(data, n, dim, k, 25, 3L,
+                KMeans.Init.KMEANS_PLUS_PLUS, null);
+        assertTrue(plusPlus.inertia() > 0 && a.inertia() > 0);
+    }
+
     @Test
     void handlesKEqualToN() {
         int n = 20;

@@ -57,6 +57,19 @@ public final class IvfPqIndex implements VectorIndex {
     /** Result heap, reused across queries so the timed region allocates nothing. */
     private BoundedMaxHeap results;
 
+    /**
+     * Optional split of query time into lookup-table construction and list scanning.
+     *
+     * <p>Off by default and never on during a reported measurement: it adds two
+     * {@code nanoTime} calls per probed list. It exists because "IVF-PQ search is slow" is
+     * not an actionable statement — the two halves have completely different fixes, and
+     * guessing which one dominates is how you optimise the wrong loop.
+     */
+    private boolean phaseTiming;
+    private long lutNanos;
+    private long scanNanos;
+    private long timedQueries;
+
     private IvfPqIndex(int dim, int size, IvfPqConfig config, float[] centroids,
                        ProductQuantizer pq, int[] listOffsets, int[] listIds, byte[] listCodes) {
         this.dim = dim;
@@ -76,8 +89,10 @@ public final class IvfPqIndex implements VectorIndex {
 
     /** A view of the same index searched with a different {@code nprobe}. */
     public IvfPqIndex withNprobe(int nprobe) {
-        return new IvfPqIndex(dim, size, config.withNprobe(nprobe), centroids, pq,
+        IvfPqIndex view = new IvfPqIndex(dim, size, config.withNprobe(nprobe), centroids, pq,
                 listOffsets, listIds, listCodes);
+        view.phaseTiming = phaseTiming;
+        return view;
     }
 
     // ---------------------------------------------------------------- build
@@ -112,7 +127,7 @@ public final class IvfPqIndex implements VectorIndex {
         long t0 = System.nanoTime();
         float[] training = sample(base, trainingSize, new Random(config.seed()));
         KMeans.Result coarse = KMeans.fit(training, trainingSize, dim, config.nlist(),
-                config.trainIterations(), config.seed(),
+                config.trainIterations(), config.seed(), config.init(),
                 (iteration, max, inertia) -> report(progress,
                         String.format("  coarse iteration %d/%d, inertia %.4g",
                                 iteration, max, inertia)));
@@ -159,7 +174,7 @@ public final class IvfPqIndex implements VectorIndex {
                 + " residuals");
         float[] pqTraining = residualSample(base, assignment, centroids, pqTrainingSize, rng);
         ProductQuantizer pq = ProductQuantizer.train(pqTraining, pqTrainingSize, dim,
-                config.m(), config.trainIterations(), config.seed() + 7,
+                config.m(), config.trainIterations(), config.seed() + 7, config.init(),
                 (done, total, inertia) -> report(progress,
                         String.format("  subspace %d/%d, inertia %.4g", done, total, inertia)));
 
@@ -173,13 +188,14 @@ public final class IvfPqIndex implements VectorIndex {
         int[] listIds = new int[n];
         byte[] listCodes = new byte[Math.multiplyExact(n, config.m())];
         float[] residual = new float[dim];
+        float[] encodeScratch = new float[ProductQuantizer.CENTROIDS_PER_SUBSPACE];
 
         for (int i = 0; i < n; i++) {
             int c = assignment[i];
             int slot = cursor[c]++;
             listIds[slot] = i;
             subtract(base.data(), base.offset(i), centroids, c * dim, residual, dim);
-            pq.encode(residual, 0, listCodes, slot * config.m());
+            pq.encode(residual, 0, listCodes, slot * config.m(), encodeScratch);
             if (progress != null && (i + 1) % 100_000 == 0) {
                 report(progress, "  encoded " + (i + 1) + " / " + n);
             }
@@ -282,6 +298,9 @@ public final class IvfPqIndex implements VectorIndex {
 
         // 2. Scan the chosen lists with a lookup table per list.
         int m = config.m();
+        if (phaseTiming) {
+            timedQueries++;
+        }
         for (int p = 0; p < probes; p++) {
             int list = probeIds[p];
             int from = listOffsets[list];
@@ -289,11 +308,18 @@ public final class IvfPqIndex implements VectorIndex {
             if (from == to) {
                 continue;
             }
+            long t0 = phaseTiming ? System.nanoTime() : 0;
             subtract(query, queryOffset, centroids, list * dim, queryResidual, dim);
             pq.computeLookupTable(queryResidual, 0, lookupTable);
+            long t1 = phaseTiming ? System.nanoTime() : 0;
             for (int slot = from; slot < to; slot++) {
                 results.offer(pq.distanceFromTable(listCodes, slot * m, lookupTable),
                         listIds[slot]);
+            }
+            if (phaseTiming) {
+                long t2 = System.nanoTime();
+                lutNanos += t1 - t0;
+                scanNanos += t2 - t1;
             }
         }
         return results.drainAscending(outIds, outDistances);
@@ -323,6 +349,31 @@ public final class IvfPqIndex implements VectorIndex {
 
     public IvfPqConfig config() {
         return config;
+    }
+
+    public void enablePhaseTiming(boolean enabled) {
+        this.phaseTiming = enabled;
+        resetPhaseTiming();
+    }
+
+    public void resetPhaseTiming() {
+        lutNanos = 0;
+        scanNanos = 0;
+        timedQueries = 0;
+    }
+
+    /** Nanoseconds spent building per-list lookup tables, since the last reset. */
+    public long lutNanos() {
+        return lutNanos;
+    }
+
+    /** Nanoseconds spent scanning inverted lists, since the last reset. */
+    public long scanNanos() {
+        return scanNanos;
+    }
+
+    public long timedQueries() {
+        return timedQueries;
     }
 
     public ProductQuantizer productQuantizer() {

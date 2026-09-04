@@ -21,6 +21,21 @@ public final class KMeans {
     }
 
     /**
+     * How the initial centroids are chosen.
+     *
+     * <p>This is a real difference from FAISS and not a detail: {@code IndexIVFPQ}'s
+     * clustering defaults to {@code init_method = 0}, which seeds from randomly chosen
+     * training points. Seeding better is a larger training budget, not a better algorithm,
+     * so any recall comparison against FAISS has to say which of these was used.
+     */
+    public enum Init {
+        /** FAISS's default: a random subsample of the training set. */
+        RANDOM_SAMPLE,
+        /** D^2 seeding. Costs one extra pass per centroid and usually converges better. */
+        KMEANS_PLUS_PLUS
+    }
+
+    /**
      * @param centroids   flat {@code k * dim}
      * @param assignments nearest centroid of each training point
      * @param inertia     sum of squared distances to assigned centroids
@@ -36,12 +51,19 @@ public final class KMeans {
 
     public static Result fit(float[] data, int n, int dim, int k, int maxIterations,
                              long seed, ProgressListener progress) {
+        return fit(data, n, dim, k, maxIterations, seed, Init.KMEANS_PLUS_PLUS, progress);
+    }
+
+    public static Result fit(float[] data, int n, int dim, int k, int maxIterations,
+                             long seed, Init init, ProgressListener progress) {
         if (k <= 0 || k > n) {
             throw new IllegalArgumentException(
                     "k must be in [1, n]; got k=" + k + " with n=" + n);
         }
         Random rng = new Random(seed);
-        float[] centroids = kmeansPlusPlusInit(data, n, dim, k, rng);
+        float[] centroids = init == Init.KMEANS_PLUS_PLUS
+                ? kmeansPlusPlusInit(data, n, dim, k, rng)
+                : randomSampleInit(data, n, dim, k, rng);
 
         int[] assignments = new int[n];
         float[] bestDistance = new float[n];
@@ -105,6 +127,24 @@ public final class KMeans {
                 }
                 total += closest[i];
             }
+        }
+        return centroids;
+    }
+
+    /** FAISS's default seeding: k distinct training points, chosen uniformly. */
+    private static float[] randomSampleInit(float[] data, int n, int dim, int k, Random rng) {
+        float[] centroids = new float[Math.multiplyExact(k, dim)];
+        int[] order = new int[n];
+        for (int i = 0; i < n; i++) {
+            order[i] = i;
+        }
+        // Partial Fisher-Yates: only the first k positions need to be settled.
+        for (int i = 0; i < k; i++) {
+            int j = i + rng.nextInt(n - i);
+            int tmp = order[i];
+            order[i] = order[j];
+            order[j] = tmp;
+            System.arraycopy(data, order[i] * dim, centroids, i * dim, dim);
         }
         return centroids;
     }

@@ -118,7 +118,7 @@ public final class SweepCommand {
                     continue;
                 }
                 IvfPqConfig config = new IvfPqConfig(nlist, pqM, a.nprobeValues()[0],
-                        a.trainIterations(), a.pointsPerCentroid(), Metric.L2, 42L);
+                        a.trainIterations(), a.pointsPerCentroid(), a.init(), Metric.L2, 42L);
                 System.out.printf("build ivfpq %s ...%n", config.shortName());
 
                 if (coarse == null) {
@@ -212,7 +212,8 @@ public final class SweepCommand {
                         int[] mValues, int[] efcValues, int[] efValues,
                         int[] nlistValues, int[] pqMValues, int[] nprobeValues,
                         NeighbourSelection selection, int trainIterations,
-                        int pointsPerCentroid, int k, int runs, int maxQueries, Path csv) {
+                        int pointsPerCentroid, io.shashwat.ann.index.KMeans.Init init,
+                        int k, int runs, int maxQueries, Path csv) {
 
         String selectionSuffix() {
             return selection == NeighbourSelection.HEURISTIC ? "" : ",sel=nearestM";
@@ -230,6 +231,8 @@ public final class SweepCommand {
             NeighbourSelection selection = NeighbourSelection.HEURISTIC;
             int trainIterations = 25;
             int pointsPerCentroid = 256;
+            io.shashwat.ann.index.KMeans.Init init =
+                    io.shashwat.ann.index.KMeans.Init.KMEANS_PLUS_PLUS;
             int k = 10;
             int runs = 3;
             int maxQueries = Integer.MAX_VALUE;
@@ -256,6 +259,12 @@ public final class SweepCommand {
                     };
                     case "--iterations" -> trainIterations = Integer.parseInt(args[++i]);
                     case "--points-per-centroid" -> pointsPerCentroid = Integer.parseInt(args[++i]);
+                    case "--init" -> init = switch (args[++i].toLowerCase(Locale.ROOT)) {
+                        case "kmeans++", "kmeanspp" ->
+                                io.shashwat.ann.index.KMeans.Init.KMEANS_PLUS_PLUS;
+                        case "random" -> io.shashwat.ann.index.KMeans.Init.RANDOM_SAMPLE;
+                        default -> throw new IllegalArgumentException("unknown init");
+                    };
                     case "--k" -> k = Integer.parseInt(args[++i]);
                     case "--runs" -> runs = Integer.parseInt(args[++i]);
                     case "--queries" -> maxQueries = Integer.parseInt(args[++i]);
@@ -274,7 +283,7 @@ public final class SweepCommand {
             }
             return new Args(dataset, hnsw, ivfpq, mValues, efcValues, efValues,
                     nlistValues, pqMValues, nprobeValues, selection, trainIterations,
-                    pointsPerCentroid, k, runs, maxQueries, csv);
+                    pointsPerCentroid, init, k, runs, maxQueries, csv);
         }
 
         private static int[] parseInts(String csv) {

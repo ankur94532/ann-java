@@ -37,7 +37,7 @@ public final class IvfPqCommand {
         }
 
         IvfPqConfig config = new IvfPqConfig(a.nlist(), a.m(), a.nprobeValues()[0],
-                a.trainIterations(), a.pointsPerCentroid(),
+                a.trainIterations(), a.pointsPerCentroid(), a.init(),
                 io.shashwat.ann.distance.Metric.L2, 42L);
         System.out.printf("building     : %s, %d Lloyd iterations%n",
                 config.shortName(), config.trainIterations());
@@ -70,11 +70,22 @@ public final class IvfPqCommand {
                     continue;
                 }
                 IvfPqIndex configured = index.withNprobe(nprobe);
+                if (a.phaseTiming()) {
+                    configured.enablePhaseTiming(true);
+                }
                 Measurement m = BenchHarness.measure(
                         data.label(), configured, configured.config().shortName(),
                         data.queries(), data.groundTruth(), a.k(), a.runs(),
                         buildSeconds, index.estimatedBytes());
                 System.out.println("  " + m);
+                if (a.phaseTiming() && configured.timedQueries() > 0) {
+                    double queries = configured.timedQueries();
+                    double lut = configured.lutNanos() / queries / 1000.0;
+                    double scan = configured.scanNanos() / queries / 1000.0;
+                    System.out.printf("      phases: lookup-table %6.1f us (%.0f%%), "
+                            + "list scan %6.1f us (%.0f%%)%n",
+                            lut, 100 * lut / (lut + scan), scan, 100 * scan / (lut + scan));
+                }
                 results.add(m);
                 if (sink != null) {
                     sink.write(m);
@@ -88,8 +99,9 @@ public final class IvfPqCommand {
     }
 
     private record Args(Datasets dataset, int nlist, int m, int[] nprobeValues,
-                        int trainIterations, int pointsPerCentroid, int k, int runs,
-                        int maxBase, int maxQueries, Path csv) {
+                        int trainIterations, int pointsPerCentroid,
+                        io.shashwat.ann.index.KMeans.Init init, int k, int runs,
+                        int maxBase, int maxQueries, Path csv, boolean phaseTiming) {
 
         static Args parse(String[] args) {
             Datasets dataset = Datasets.SIFT1M;
@@ -98,6 +110,9 @@ public final class IvfPqCommand {
             int[] nprobe = {1, 4, 8, 16, 32, 64};
             int trainIterations = 25;
             int pointsPerCentroid = 256;
+            io.shashwat.ann.index.KMeans.Init init =
+                    io.shashwat.ann.index.KMeans.Init.KMEANS_PLUS_PLUS;
+            boolean phaseTiming = false;
             int k = 10;
             int runs = 3;
             int maxBase = Integer.MAX_VALUE;
@@ -116,6 +131,13 @@ public final class IvfPqCommand {
                     case "--nprobe" -> nprobe = parseInts(args[++i]);
                     case "--iterations" -> trainIterations = Integer.parseInt(args[++i]);
                     case "--points-per-centroid" -> pointsPerCentroid = Integer.parseInt(args[++i]);
+                    case "--init" -> init = switch (args[++i].toLowerCase()) {
+                        case "kmeans++", "kmeanspp" ->
+                                io.shashwat.ann.index.KMeans.Init.KMEANS_PLUS_PLUS;
+                        case "random" -> io.shashwat.ann.index.KMeans.Init.RANDOM_SAMPLE;
+                        default -> throw new IllegalArgumentException("unknown init");
+                    };
+                    case "--phase-timing" -> phaseTiming = true;
                     case "--k" -> k = Integer.parseInt(args[++i]);
                     case "--runs" -> runs = Integer.parseInt(args[++i]);
                     case "--base" -> maxBase = Integer.parseInt(args[++i]);
@@ -125,7 +147,7 @@ public final class IvfPqCommand {
                 }
             }
             return new Args(dataset, nlist, m, nprobe, trainIterations, pointsPerCentroid,
-                    k, runs, maxBase, maxQueries, csv);
+                    init, k, runs, maxBase, maxQueries, csv, phaseTiming);
         }
 
         private static int[] parseInts(String csv) {

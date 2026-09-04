@@ -14,13 +14,19 @@ import io.shashwat.ann.distance.Metric;
  *                           the recall ceiling.
  * @param nprobe             lists to scan per query. The recall/latency dial, changeable
  *                           after the build.
- * @param trainIterations    Lloyd iterations for both quantizers. 25 matches FAISS's
- *                           default, so the comparison is not confounded by training effort.
+ * @param trainIterations    Lloyd iterations for both quantizers. FAISS's ProductQuantizer
+ *                           defaults to 25; IndexIVFPQ's coarse clustering defaults to only
+ *                           10, so scripts/faiss_bench.py raises it to 25 explicitly and
+ *                           both sides train for the same number of iterations.
+ * @param init               centroid seeding. FAISS defaults to a random subsample; this
+ *                           defaults to k-means++, which is a larger training budget, so
+ *                           the difference is measured as an ablation rather than assumed
+ *                           to be free.
  * @param pointsPerCentroid  training-set size per centroid, capped against the base size.
  *                           256 also matches FAISS's default.
  */
 public record IvfPqConfig(int nlist, int m, int nprobe, int trainIterations,
-                          int pointsPerCentroid, Metric metric, long seed) {
+                          int pointsPerCentroid, KMeans.Init init, Metric metric, long seed) {
 
     public IvfPqConfig {
         if (nlist < 1) {
@@ -43,12 +49,18 @@ public record IvfPqConfig(int nlist, int m, int nprobe, int trainIterations,
     }
 
     public static IvfPqConfig of(int nlist, int m, int nprobe) {
-        return new IvfPqConfig(nlist, m, nprobe, 25, 256, Metric.L2, 42L);
+        return new IvfPqConfig(nlist, m, nprobe, 25, 256,
+                KMeans.Init.KMEANS_PLUS_PLUS, Metric.L2, 42L);
     }
 
     public IvfPqConfig withNprobe(int newNprobe) {
         return new IvfPqConfig(nlist, m, Math.min(newNprobe, nlist), trainIterations,
-                pointsPerCentroid, metric, seed);
+                pointsPerCentroid, init, metric, seed);
+    }
+
+    public IvfPqConfig withInit(KMeans.Init newInit) {
+        return new IvfPqConfig(nlist, m, nprobe, trainIterations, pointsPerCentroid,
+                newInit, metric, seed);
     }
 
     /** Training sample size for the coarse quantizer, capped at the base size. */
@@ -63,6 +75,7 @@ public record IvfPqConfig(int nlist, int m, int nprobe, int trainIterations,
     }
 
     public String shortName() {
-        return "nlist=" + nlist + ",m=" + m + ",nprobe=" + nprobe;
+        return "nlist=" + nlist + ",m=" + m + ",nprobe=" + nprobe
+                + (init == KMeans.Init.KMEANS_PLUS_PLUS ? "" : ",init=random");
     }
 }
