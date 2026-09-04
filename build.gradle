@@ -1,0 +1,89 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'io.shashwat'
+version = '0.1.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+// The Vector API is an incubator module in JDK 21; every javac and java
+// invocation that touches it has to opt in explicitly.
+def incubatorArgs = ['--add-modules', 'jdk.incubator.vector']
+
+sourceSets {
+    jmh {
+        java.srcDirs = ['src/jmh/java']
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+
+configurations {
+    jmhImplementation.extendsFrom implementation
+    jmhAnnotationProcessor
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.11.3')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    jmhImplementation 'org.openjdk.jmh:jmh-core:1.37'
+    jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += incubatorArgs
+    // The incubator module warning is expected and noisy; everything else matters.
+    options.compilerArgs += ['-Xlint:all', '-Xlint:-preview']
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+    jvmArgs incubatorArgs
+    jvmArgs '-Xmx8g'
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+    }
+}
+
+application {
+    mainClass = 'io.shashwat.ann.Main'
+    applicationDefaultJvmArgs = incubatorArgs + [
+            '-Xmx12g',
+            // JFR: start recording on demand with -Pjfr=true (see the jfrArgs block below).
+    ]
+}
+
+// ./gradlew run -Pjfr=true  ->  writes build/ann.jfr
+tasks.named('run', JavaExec) {
+    if (project.hasProperty('jfr')) {
+        jvmArgs '-XX:StartFlightRecording=settings=profile,filename=build/ann.jfr,dumponexit=true'
+    }
+    if (project.hasProperty('args')) {
+        args project.property('args').toString().split('\\s+')
+    }
+}
+
+tasks.register('jmh', JavaExec) {
+    group = 'benchmark'
+    description = 'Runs the JMH microbenchmarks in src/jmh/java.'
+    dependsOn tasks.named('jmhClasses')
+    classpath = sourceSets.jmh.runtimeClasspath
+    mainClass = 'org.openjdk.jmh.Main'
+    jvmArgs incubatorArgs
+    if (project.hasProperty('jmhArgs')) {
+        args project.property('jmhArgs').toString().split('\\s+')
+    }
+}

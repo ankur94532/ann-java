@@ -1,0 +1,25 @@
+# Datasets are large (SIFT1M is ~500MB unpacked, GIST1M ~3.6GB). Never commit them.
+data/
+
+# Build output
+build/
+out/
+.gradle/
+*.class
+*.jar
+
+# JFR recordings and JMH raw output
+*.jfr
+build/jmh/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editors / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
