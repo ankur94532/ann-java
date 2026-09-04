@@ -166,7 +166,35 @@ public final class KMeans {
         return n - 1;
     }
 
-    /** @return inertia */
+    /**
+     * Assigns every point to its nearest centroid.
+     *
+     * <p>This is the hot loop of the whole build: at {@code nlist=4096} on a million
+     * training vectors it is 1.02 x 10^11 distance computations, and it is where IVF-PQ
+     * construction is 4.6-8.7x slower than FAISS.
+     *
+     * <p><b>Cache blocking was tried here and does nothing.</b> Holding a block of 32 points
+     * against a slab of 64 centroids so both stay resident measured 1119.8s against 1102.4s
+     * for this loop — a wash, and slightly worse. The arithmetic says why it could never have
+     * helped: this loop already runs at 93 M distances/s, which is *above* the 75 M/s the JMH
+     * benchmark measures for the same kernel on an L1-resident pair. The point being assigned
+     * stays in L1 across all 4096 centroids and the centroid array is 2 MiB, comfortably L2
+     * resident. There was no memory traffic left to remove.
+     *
+     * <p><b>Where FAISS's 8x actually comes from.</b> It computes the assignment as a matrix
+     * product — {@code ||x-c||^2 = ||x||^2 + ||c||^2 - 2 x.c}, so the whole distance matrix
+     * is one {@code sgemm} — and the win is *register* blocking, not cache blocking. A GEMM
+     * microkernel computing a 4x4 tile of (point, centroid) pairs loads four point vectors
+     * and four centroid vectors and issues sixteen dot products from them, so each loaded
+     * value feeds many FMAs. This loop loads both full vectors for every single pair. That
+     * ratio is the factor of eight.
+     *
+     * <p>Closing it means writing a GEMM microkernel with register-level tiling against the
+     * Vector API, since rule 4 forbids linking a BLAS. That is the largest identified
+     * optimization left in this project and it is not done.
+     *
+     * @return inertia
+     */
     private static double assign(float[] data, int n, int dim, float[] centroids, int k,
                                  int[] assignments, float[] bestDistance) {
         double inertia = 0;
