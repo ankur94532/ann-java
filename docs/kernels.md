@@ -70,8 +70,17 @@ do not.
 
 **At d=128 the SIMD kernel hits the lane ceiling and stops.** 4.16x against a 4-lane
 machine is as good as this gets, and the four-accumulator variant is very slightly
-*slower* than the single-accumulator one (13.3 vs 12.8 ns). That is the first row of the
-table that is worth more than its speedup: unrolling is not free. Four accumulators cost
+*slower* than the single-accumulator one (13.3 vs 12.8 ns).
+
+Note which kernel that 4.16x belongs to: the **single-accumulator** one. It keeps the same
+serial FMA chain the scalar loop has, so it wins the lanes and nothing else — which is
+exactly why it lands at 4x and not beyond. The 10.17x figure at d=960 below belongs to the
+**four-accumulator** kernel, which wins the lanes *and* breaks the chain. Comparing the two
+headline numbers without noticing they come from different kernels makes them look
+contradictory; they are not.
+
+The d=128 row is also worth more than its speedup for a second reason: unrolling is not
+free. Four accumulators cost
 four vector zeroings up front and a three-add reduction tree plus a horizontal
 `reduceLanes` at the end, and at d=128 there are only 32 vector steps to amortise that
 over. The fixed cost is about 4 ns; the loop is only 13.

@@ -2,7 +2,7 @@
 
 **recall@10 of 0.9920 on a million vectors in 165 µs per query, single-threaded, from a
 from-scratch Java HNSW** — and an IVF-PQ that indexes the same million vectors in 19.7 MiB,
-24.8x smaller than the raw data, matching FAISS's recall to within 0.0004.
+24.8x smaller than the raw data.
 
 Approximate nearest-neighbour indexes — **HNSW** and **IVF-PQ** — written from scratch in
 Java 21 with the incubating Vector API, benchmarked against FAISS on SIFT1M under a
@@ -66,12 +66,18 @@ to actually move this frontier and is noted under Limitations.
 
 ---
 
-## The recall ceiling is 0.9994, not 1.0
+## The oracle is provably exact, and the recall ceiling is 0.9994
 
-Checkpoint 1 compared this project's own exact search against the ground truth shipped with
-SIFT1M. All 10,000 queries reproduce the shipped 10-NN **distance** sequence exactly, with
-zero queries where the search returned anything genuinely farther. But 646 of them disagree
-on **ids**, because the dataset contains vectors that are exactly equidistant from a query.
+Checkpoint 1 validated this project's own exact search against the ground truth shipped
+with SIFT1M — and it validated something stronger than an id-for-id match. **All 10,000
+queries reproduce the shipped 10-NN distance sequence exactly, with zero queries where this
+search returned a vector genuinely farther than one the shipped truth names.** That is the
+well-defined statement of "the search is exact"; matching ids is not, and cannot be, because
+the dataset contains vectors exactly equidistant from a query.
+
+646 queries do disagree on ids, entirely through those ties. Checking distances instead of
+ids is what makes the disagreement diagnosable rather than alarming: it separates "the
+loader or the scan is wrong" from "the question has more than one right answer."
 
 Query 93 has base vectors 196106 and 274922 both at squared distance 42192.0 — and on SIFT
 that is not a rounding artefact. Components are integers in [0, 255], so every squared
@@ -79,9 +85,10 @@ distance is an integer below 2²⁴ and float32 represents it with no error at a
 the two is "the" 10th neighbour is arbitrary; the shipped file and this scan happen to
 choose differently.
 
-**So no configuration in this project can score above 0.999440.** It applies equally to the
-Java indexes and to FAISS, so the comparison is unaffected — but a reported 0.9994 means
-"as good as exact", and it is worth knowing that 1.0 is not on the table.
+**So no configuration in this project can score above 0.999440** — not because anything is
+approximate, but because the metric asks for ids and the ids are not unique. It applies
+equally to the Java indexes and to FAISS, so the comparison is unaffected; a reported 0.9994
+means "as good as exact", and 1.0 was never on the table.
 
 ---
 
@@ -125,18 +132,23 @@ multiples of the lane count or the unroll factor.
 |---|---:|---:|
 | SIMD speedup over scalar | **4.16x** | **10.17x** |
 
-The machine has 128-bit vectors (ARM NEON, 4 float lanes), so 4x is what the lane count
-alone can buy and 4.16x at d=128 is essentially that ceiling. The extra 4% is not extra
-parallelism: the scalar loop does not quite sustain one element per cycle either, and the
-SIMD version recovers that slack as well as the lanes. **10.17x at d=960, though, is not
-reachable by any amount of slack on a 4-lane machine, which means the scalar baseline is
-the thing that is broken** — and it is. Java may not reassociate a float sum,
-so `sum += d*d` runs at one addition per FP-add *latency* rather than throughput. Four
-independent SIMD accumulators win 4x from the lanes and another 2.6x from breaking a
-dependency chain the scalar version was never allowed to break.
+The machine has 128-bit vectors (ARM NEON, 4 float lanes), so 4x is all the lane count can
+buy. **The two figures differ because they are two different kernels**, and that is the
+whole point:
 
-Recorded honestly alongside it: at d=128 the four-accumulator kernel is 0.5 ns *slower*
-than the single-accumulator one, because its reduction tree cannot amortise over 32 steps.
+* At **d=128** the fastest kernel is the *single-accumulator* one (12.8 ns). It carries the
+  same serial FMA dependency chain the scalar loop has, so it wins the lanes and nothing
+  else — 4.16x, essentially the lane ceiling. Adding accumulators makes it *slower* here
+  (13.3 ns), because the reduction tree cannot amortise over only 32 vector steps.
+* At **d=960** the fastest is the *four-accumulator* one (70.2 ns). The single-accumulator
+  version manages only 3.89x — again lanes alone — and the four-accumulator version gets
+  another 2.6x on top by breaking the dependency chain. 4 × 2.6 ≈ 10.17x.
+
+The chain is the thing. Java may not reassociate a float sum, so `sum += d*d` advances at
+one addition per FP-add *latency* rather than throughput, and any kernel that keeps a single
+accumulator inherits that limit no matter how wide its vectors are. **A speedup above the
+lane count is never extra parallelism in the SIMD path; it is a serial dependency in the
+baseline that the SIMD path was allowed to break and the scalar loop was not.**
 
 ### HNSW optimization — [docs/hnsw-optimization.md](docs/hnsw-optimization.md)
 
