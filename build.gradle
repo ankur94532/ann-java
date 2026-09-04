@@ -30,12 +30,12 @@ sourceSets {
 
 configurations {
     jmhImplementation.extendsFrom implementation
-    jmhAnnotationProcessor
 }
 
 dependencies {
     testImplementation platform('org.junit:junit-bom:5.11.3')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.junit.jupiter:junit-jupiter-params'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
     jmhImplementation 'org.openjdk.jmh:jmh-core:1.37'
@@ -70,9 +70,6 @@ application {
 tasks.named('run', JavaExec) {
     if (project.hasProperty('jfr')) {
         jvmArgs '-XX:StartFlightRecording=settings=profile,filename=build/ann.jfr,dumponexit=true'
-    }
-    if (project.hasProperty('args')) {
-        args project.property('args').toString().split('\\s+')
     }
 }
 

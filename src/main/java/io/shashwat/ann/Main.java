@@ -1,7 +1,10 @@
 package io.shashwat.ann;
 
+import io.shashwat.ann.bench.OracleCommand;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorSpecies;
+
+import java.util.Arrays;
 
 /**
  * Entry point. With no arguments it prints the build and environment banner that the
@@ -17,18 +20,39 @@ public final class Main {
     public static void main(String[] args) {
         if (args.length == 0) {
             System.out.println(VERSION);
-            System.out.println(environmentBanner());
+            System.out.print(environmentBanner());
             return;
         }
-        switch (args[0]) {
-            case "env" -> System.out.println(environmentBanner());
-            case "version" -> System.out.println(VERSION);
+        String[] rest = Arrays.copyOfRange(args, 1, args.length);
+        int exit = switch (args[0]) {
+            case "version" -> {
+                System.out.println(VERSION);
+                yield 0;
+            }
+            case "env" -> {
+                System.out.print(environmentBanner());
+                yield 0;
+            }
+            case "oracle" -> OracleCommand.run(rest);
             default -> {
                 System.err.println("unknown command: " + args[0]);
-                System.err.println("usage: Main [version|env]");
-                System.exit(2);
+                System.err.println(usage());
+                yield 2;
             }
+        };
+        if (exit != 0) {
+            System.exit(exit);
         }
+    }
+
+    private static String usage() {
+        return """
+                usage: Main <command> [options]
+                  version                        print the build version
+                  env                            print the hardware/JVM banner
+                  oracle [--dataset sift|gist] [--k 10] [--queries N]
+                                                 exact search, validated against shipped ground truth
+                """;
     }
 
     /**
