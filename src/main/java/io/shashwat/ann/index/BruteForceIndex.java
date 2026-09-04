@@ -1,5 +1,6 @@
 package io.shashwat.ann.index;
 
+import io.shashwat.ann.distance.Distance;
 import io.shashwat.ann.distance.Metric;
 import io.shashwat.ann.io.VectorDataset;
 
@@ -8,22 +9,54 @@ import java.util.stream.IntStream;
 
 /**
  * Exact k-NN by scanning every vector. This is the oracle: every approximate index is
- * validated against it, so it is written for obviousness rather than speed and uses the
- * scalar distance kernels only.
+ * validated against it, so it is written for obviousness rather than speed.
+ *
+ * <p>It defaults to the scalar kernel for exactly that reason — the thing everything else is
+ * checked against should contain no clever code. But a scalar scan costs 714 ns per distance
+ * at 960 dimensions, which turns validating GIST1M into a thirteen-hour job, so the kernel
+ * is selectable. The substitution is safe and not a matter of opinion: {@code
+ * DistanceKernelTest} checks the two kernels against each other across dimensions that are
+ * not multiples of the lane count or the unroll factor, and {@code OracleCommand}
+ * re-verifies a subsample with the other kernel on every run.
  */
 public final class BruteForceIndex implements VectorIndex {
 
+    /** Which distance implementation the scan uses. */
+    public enum Kernel {
+        /** Plain loops. Obviously correct, and slow at high dimension. */
+        SCALAR,
+        /** Vector API. Agrees with scalar to float tolerance; see DistanceKernelTest. */
+        SIMD
+    }
+
     private final VectorDataset base;
     private final Metric metric;
+    private final Kernel kernel;
 
     public BruteForceIndex(VectorDataset base, Metric metric) {
+        this(base, metric, Kernel.SCALAR);
+    }
+
+    public BruteForceIndex(VectorDataset base, Metric metric, Kernel kernel) {
         this.base = base;
         this.metric = metric;
+        this.kernel = kernel;
+    }
+
+    public Kernel kernel() {
+        return kernel;
+    }
+
+    private float distance(float[] query, int queryOffset, int baseOffset) {
+        return kernel == Kernel.SCALAR
+                ? metric.scalar(query, queryOffset, base.data(), baseOffset, base.dim())
+                : Distance.compute(metric, query, queryOffset, base.data(), baseOffset,
+                        base.dim());
     }
 
     @Override
     public String name() {
-        return "brute-force(" + metric + ")";
+        return "brute-force(" + metric + "," + kernel + ")";
     }
 
     @Override
@@ -48,7 +81,7 @@ public final class BruteForceIndex implements VectorIndex {
         float[] data = base.data();
         BoundedMaxHeap heap = new BoundedMaxHeap(Math.min(k, n));
         for (int i = 0, off = 0; i < n; i++, off += dim) {
-            heap.offer(metric.scalar(query, queryOffset, data, off, dim), i);
+            heap.offer(distance(query, queryOffset, off), i);
         }
         return heap.drainAscending(outIds, outDistances);
     }
@@ -84,9 +117,9 @@ public final class BruteForceIndex implements VectorIndex {
         return new Exact(ids, distances, k);
     }
 
-    /** Distance from a query to one specific indexed vector. */
+    /** Distance from a query to one specific indexed vector, using this index's kernel. */
     public float distanceTo(float[] query, int queryOffset, int id) {
-        return metric.scalar(query, queryOffset, base.data(), base.offset(id), base.dim());
+        return distance(query, queryOffset, base.offset(id));
     }
 
     /** The result of an exact sweep: {@code nq * k} ids with their distances. */

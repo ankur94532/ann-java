@@ -38,7 +38,42 @@ in this project is measured against the shipped ids on the same footing, so the 
 applies equally to the Java indexes and to FAISS and does not distort the comparison —
 but a reported 0.9994 means "as good as exact", and no configuration can do better.
 
+**GIST1M has the same property for a different reason, and the ceiling is 0.999200.** All
+1,000 queries return a distance sequence no worse than the shipped one, with zero queries
+where this search returned a vector genuinely farther; 64 disagree on ids. But where SIFT's
+ties are *exact*, GIST's are not resolvable rather than equal. Summing 960 squared
+differences in float32 accumulates relative error of order `sqrt(960) * eps ≈ 1.9e-6`, and
+for at least one query (697) the gap between the 10th and 11th neighbours is smaller than
+that: this scan finds 67023 at 1.3828166 where the shipped truth names 785940 at 1.3828262,
+a relative difference of 7e-6. Neither is wrong; the two vectors are not distinguishable at
+this precision.
+
+Comparison against the ground truth therefore allows a relative tolerance of
+`16 * sqrt(dim) * eps`, and is **one-sided**: finding a vector *closer* than the shipped
+truth names is never an error, only finding one genuinely farther is. The tolerance is
+derived from the dimension rather than the dataset, so SIFT — where it is never needed —
+is not special-cased.
+
 No normalisation, no dimensionality reduction, no deduplication is applied to any vector.
+
+### 1.1 Oracle kernel
+
+The brute-force oracle uses the **scalar** distance kernel, on both datasets, because the
+thing every index is validated against should contain no clever code.
+
+A selectable SIMD kernel exists (`oracle --kernel simd`) and was added on the belief that a
+scalar scan would make GIST1M validation a thirteen-hour job. **That estimate was wrong by
+about 250x** — it multiplied the dimension into the distance *count*, when the dimension is
+already inside the per-distance cost. GIST1M has only 1,000 queries against 1,000,000 base
+vectors, so it is 10^9 distance computations, each about 13x more expensive than a SIFT one:
+roughly three minutes, not thirteen hours. The scalar oracle is entirely affordable and is
+what both datasets use.
+
+The SIMD option is kept because it is useful for larger query sets, and because it forced a
+cross-check worth having: when it is used, the run re-verifies a subsample with the scalar
+kernel and reports id agreement and the worst relative distance difference. On SIFT1M the
+two agree exactly (300/300 queries, relative difference 0.00e+00), since every squared
+distance there is an exact integer below 2^24.
 
 ## 2. Task
 

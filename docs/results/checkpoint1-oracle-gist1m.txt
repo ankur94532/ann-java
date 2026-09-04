@@ -1,0 +1,14 @@
+dataset      : GIST1M
+loaded       : 1,000,000 base x 960 dims, 1,000 queries, gt width 100 (0.5s)
+kernel       : SCALAR
+scanning     : 1,000 queries x 1,000,000 vectors, k=10, 14 threads
+
+done         : 48.7s (20,549,915 distance computations/s)
+
+distances    : 1,000 / 1,000 queries return a distance sequence no worse than the shipped one (tolerance 5.9e-05 relative, from float32
+               accumulation over 960 dimensions)
+ties         : 64 queries return a different id at some position with an identical distance
+errors       : 0 queries where a returned vector is genuinely farther than a shipped one
+recall@10    : 0.999200  <- the ceiling for every index in this project
+
+OK: exact search reproduces the shipped ground truth up to ties.
