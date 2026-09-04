@@ -107,7 +107,7 @@ same full query set on both sides:
 entirely latency, and the shape of it is the informative part: **at nprobe=1 this
 implementation is marginally faster than FAISS, and the gap only opens as nprobe grows.**
 The fixed per-query cost — coarse search over 1024 centroids, heap setup — is competitive.
-The marginal per-list cost is not, and that is where all 2.5x lives.
+The marginal per-list cost is not, and that is where all 2.54x lives.
 
 Within that marginal cost, the list scan is the remainder: it runs at about 1.8 cycles per
 table lookup against a load-throughput limit nearer 1.1. The lookup-table half was 62% of a
@@ -221,11 +221,12 @@ particular are not portable: an AVX-512 host runs the same source 16 lanes wide.
 
 ## Limitations
 
-* **The recall ceiling is 0.9994**, for the tie reason above.
+* **The metric's ceiling is 0.999440**, because ids are not unique under exact distance
+  ties — the search itself is exact. See the Checkpoint 1 section above.
 * **Single-threaded throughout**, build and search, on both sides. That is the only setting
   in which "mine took X and FAISS took Y" means anything, but it is not how either would be
   deployed.
-* **The IVF-PQ search gap to FAISS is 2.5x** at high `nprobe` and is not closed. It is
+* **The IVF-PQ search gap to FAISS is 2.54x** at nprobe=64 and is not closed. It is
   localised to the list scan and quantified, not hand-waved.
 * **No OPQ rotation**, so the product quantizer assumes the subspaces are uncorrelated. SIFT
   satisfies that reasonably; GIST, whose 960 dimensions are far more correlated across
