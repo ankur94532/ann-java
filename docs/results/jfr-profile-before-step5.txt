@@ -1,0 +1,41 @@
+JFR execution-sample profile, FastHnswIndex before step 5
+SIFT1M, M=16, efConstruction=200, ef=64 and 512, JDK 21, settings=profile
+
+Extracted with:
+  jfr print --stack-depth 64 --events jdk.ExecutionSample build/ann.jfr > samples.txt
+  python3 scripts/jfr_hotspots.py samples.txt --under BenchHarness.measure
+
+
+SELF time (the method the sample landed in)  (3,086 samples)
+      %   samples  method
+  33.3%     1,029  io.shashwat.ann.distance.SimdDistance.l2SquaredUnrolled
+  21.5%       662  io.shashwat.ann.distance.Distance.l2Squared
+  16.5%       510  io.shashwat.ann.index.LongMinHeap.push
+  13.2%       406  io.shashwat.ann.index.FastHnswIndex.searchLayer
+   5.7%       176  io.shashwat.ann.index.BoundedMaxHeap.siftUp
+   3.9%       120  io.shashwat.ann.index.BoundedMaxHeap.offer
+   3.0%        92  io.shashwat.ann.index.BoundedMaxHeap.siftDown
+   1.3%        40  io.shashwat.ann.index.LongMinHeap.pop
+   0.8%        24  java.util.DualPivotQuicksort.mixedInsertionSort
+   0.6%        17  java.util.DualPivotQuicksort.sort
+   0.2%         5  io.shashwat.ann.index.BoundedMaxHeap.drainAscendingPacked
+   0.1%         2  io.shashwat.ann.index.FastHnswIndex.greedyDescend
+
+
+Same recording, build phase (--under FastHnswIndex.buildAll):
+
+SELF time (the method the sample landed in)  (20,354 samples)
+      %   samples  method
+  37.7%     7,675  io.shashwat.ann.distance.SimdDistance.l2SquaredUnrolled
+  18.3%     3,716  io.shashwat.ann.distance.Distance.l2Squared
+  13.0%     2,636  io.shashwat.ann.index.LongMinHeap.push
+  12.7%     2,595  io.shashwat.ann.index.FastHnswIndex.searchLayer
+   5.5%     1,111  io.shashwat.ann.index.BoundedMaxHeap.siftUp
+   5.3%     1,069  io.shashwat.ann.index.BoundedMaxHeap.offer
+   3.1%       629  io.shashwat.ann.index.BoundedMaxHeap.siftDown
+   1.5%       310  io.shashwat.ann.index.BoundedMaxHeap.drainAscendingPacked
+   1.1%       215  io.shashwat.ann.index.LongMinHeap.pop
+   0.8%       154  java.util.DualPivotQuicksort.mixedInsertionSort
+   0.5%        94  java.util.DualPivotQuicksort.sort
+   0.3%        68  io.shashwat.ann.index.FastHnswIndex.add
+

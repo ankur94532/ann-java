@@ -87,6 +87,12 @@ public final class FastHnswIndex implements Hnsw {
     private int[] selectionScratch;
     private int[] pruneScratch;
     private int[] neighbourScratch;
+
+    /**
+     * Consumes the prefetch reads so escape analysis cannot delete them. Never read for
+     * anything else; its value is meaningless.
+     */
+    private float prefetchSink;
     private long[] selectionCandidates;
 
     public FastHnswIndex(VectorDataset base, HnswConfig config) {
@@ -405,7 +411,17 @@ public final class FastHnswIndex implements Hnsw {
                     neighbourScratch[pending++] = neighbour;
                 }
             }
-            // Phase 2: the distances, with every address already known.
+            // Phase 1b: start the loads. Reading one float per vector is enough to bring
+            // its first cache line in, and the accumulator keeps the JIT from removing the
+            // reads as dead code.
+            float[] data = base.data();
+            float touched = 0;
+            for (int i = 0; i < pending; i++) {
+                touched += data[neighbourScratch[i] * dim];
+            }
+            prefetchSink += touched;
+
+            // Phase 2: the distances, with every address already known and in flight.
             for (int i = 0; i < pending; i++) {
                 int neighbour = neighbourScratch[i];
                 float d = distance(query, queryOffset, neighbour);

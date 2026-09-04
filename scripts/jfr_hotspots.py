@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Aggregates JFR execution samples into a hot-method report.
 
-    jfr print --events jdk.ExecutionSample build/ann.jfr > build/samples.txt
-    python3 scripts/jfr_hotspots.py build/samples.txt
+    jfr print --stack-depth 64 --events jdk.ExecutionSample build/ann.jfr > build/samples.txt
+    python3 scripts/jfr_hotspots.py build/samples.txt --under BenchHarness.measure
+
+**--stack-depth 64 is not optional.** `jfr print` truncates displayed stack traces to
+five frames by default, which silently breaks any filter or attribution that depends on
+a caller deeper than that: a build sample and a search sample both look like
+[kernel, searchLayer, ...] and become indistinguishable. The script checks for this.
 
 Two views, because they answer different questions:
 
@@ -18,12 +23,16 @@ from collections import Counter
 
 FRAME = re.compile(r"^\s+(\S+?)\.(\w+)\(")
 
+# Deepest stack seen, used to detect a recording printed with the default 5-frame limit.
+max_depth = [0]
+
 
 def parse(path, package_filter, under=None):
     self_counts = Counter()
     total_counts = Counter()
     samples = 0
     frames = []
+    max_depth[0] = 0
 
     def flush():
         nonlocal samples
@@ -34,6 +43,7 @@ def parse(path, package_filter, under=None):
         if under and not any(under in frame for frame in frames):
             return
         samples += 1
+        max_depth[0] = max(max_depth[0], len(frames))
         for i, frame in enumerate(frames):
             if package_filter and package_filter not in frame:
                 continue
@@ -83,6 +93,10 @@ def main():
     args = parser.parse_args()
 
     self_counts, total_counts, samples = parse(args.samples, args.package, args.under)
+    if max_depth[0] <= 5:
+        print("WARNING: no stack deeper than 5 frames was found. `jfr print` truncates to "
+              "5 frames unless you pass --stack-depth 64; re-extract before trusting any "
+              "of this.\n")
     if samples == 0:
         raise SystemExit("no execution samples found; was the recording made with "
                          "settings=profile?")
