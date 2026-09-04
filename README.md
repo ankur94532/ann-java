@@ -174,15 +174,29 @@ it examines slightly more candidates, not because its graph is better.
 `OPTIMIZE DD ARM_NEON MAC_METAL` with the full ASIMD instruction set available. That was the
 obvious explanation and it is wrong.
 
-What is left is execution efficiency, and the shape of the gap says where. A pure
-distance-kernel difference would show a *constant* nanoseconds-per-distance gap. This one
-grows from 13% to 46% as `efSearch` widens — so most of it is not the kernel, it is the
-per-candidate bookkeeping that a wider beam multiplies. That is exactly what
-[docs/hnsw-optimization.md](docs/hnsw-optimization.md) steps 2 and 3 attacked, and their
-measured benefit grew with `efSearch` in the same way (step 3: −8% at ef=16, −17% at
-ef=512). The versioned visited stamps and the primitive `long[]` heaps are worth more the
-harder the search works, and the constant ~8 ns component is where the software prefetch and
-the kernel itself sit.
+What is left is execution efficiency. On the shape of the gap I can say less than I would
+like, and it is worth being precise about which half is measured.
+
+**Measured, on this side only.** A JFR profile of the search phase splits this
+implementation's query time into roughly 47% distance kernel and 53% bookkeeping — the
+frontier heap, the result beam, the visited stamps, the arena reads. That number is from
+`docs/results/jfr-profile-after-step5.txt`.
+
+**Inferred, about FAISS.** The per-distance gap is not constant: it grows from 13% at ef=16
+to 46% at ef=512. A pure distance-kernel difference would be flat, so *something* that scales
+with beam width is involved. That is consistent with per-candidate bookkeeping being the
+larger part, and it matches the shape of this project's own optimization history — steps 2
+and 3 in [docs/hnsw-optimization.md](docs/hnsw-optimization.md) attacked exactly that
+bookkeeping, and their benefit also grew with `efSearch` (step 3: −8% at ef=16, −17% at
+ef=512).
+
+**But consistent-with is not demonstrated.** Splitting FAISS's per-distance cost into kernel
+and bookkeeping would mean instrumenting its `DistanceComputer`, which has not been done. The
+obvious cheap substitute — sweeping `M` at fixed `efSearch` — does not work, because `M`
+simultaneously changes distances per hop, graph connectivity and therefore hop count, and
+neighbour-list size and therefore cache behaviour; a gap that tracked `M` would not say which
+of the three caused it. So the decomposition above is a hypothesis the data is compatible
+with, not a result.
 
 **The scope of the claim.** Single-threaded, one query per call, on aarch64, against
 `faiss-cpu` 1.15.0. FAISS's batched search paths, its threading, and its x86 AVX-512 kernels
