@@ -13,15 +13,41 @@ import java.util.Arrays;
 public final class BoundedMaxHeap {
 
     private final long[] heap;
-    private final int capacity;
+    private int capacity;
     private int size;
 
     public BoundedMaxHeap(int capacity) {
+        this(capacity, capacity);
+    }
+
+    /**
+     * A heap whose array is sized for {@code maxCapacity} but which can be
+     * {@link #reset(int) reset} to any smaller capacity.
+     *
+     * <p>HNSW needs both {@code efConstruction} and {@code efSearch} widths from the same
+     * object, and reallocating per search would put an allocation back into the timed loop
+     * that the primitive heap exists to remove.
+     */
+    public static BoundedMaxHeap withMaxCapacity(int maxCapacity) {
+        return new BoundedMaxHeap(maxCapacity, maxCapacity);
+    }
+
+    private BoundedMaxHeap(int capacity, int maxCapacity) {
         if (capacity <= 0) {
             throw new IllegalArgumentException("capacity must be positive, got " + capacity);
         }
         this.capacity = capacity;
-        this.heap = new long[capacity];
+        this.heap = new long[maxCapacity];
+    }
+
+    /** Empties the heap and sets a new capacity, reusing the existing array. */
+    public void reset(int newCapacity) {
+        if (newCapacity <= 0 || newCapacity > heap.length) {
+            throw new IllegalArgumentException("capacity " + newCapacity
+                    + " must be in [1, " + heap.length + "]");
+        }
+        this.capacity = newCapacity;
+        this.size = 0;
     }
 
     public int size() {
@@ -43,6 +69,17 @@ public final class BoundedMaxHeap {
     /** Distance of the current worst kept entry; {@link Float#POSITIVE_INFINITY} if not full. */
     public float worstDistance() {
         return size < capacity ? Float.POSITIVE_INFINITY : Packing.distance(heap[0]);
+    }
+
+    /**
+     * The worst kept entry, still packed, so a caller holding another packed value can
+     * compare the two on the full (distance, id) order with one long comparison.
+     */
+    public long worstPacked() {
+        if (size == 0) {
+            throw new IllegalStateException("heap is empty");
+        }
+        return heap[0];
     }
 
     /** @return true if the pair was kept. */
@@ -75,6 +112,19 @@ public final class BoundedMaxHeap {
                 outDistances[i] = Packing.distance(heap[i]);
             }
         }
+        return size;
+    }
+
+    /**
+     * Writes the kept entries into {@code out}, still packed, nearest first. Destroys the
+     * heap. Leaving them packed lets the caller pass them straight to code that compares
+     * on the (distance, id) order without unpacking and repacking.
+     *
+     * @return the number of entries written
+     */
+    public int drainAscendingPacked(long[] out) {
+        Arrays.sort(heap, 0, size);
+        System.arraycopy(heap, 0, out, 0, size);
         return size;
     }
 

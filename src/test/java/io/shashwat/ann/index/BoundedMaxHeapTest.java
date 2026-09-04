@@ -8,6 +8,7 @@ import java.util.Random;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BoundedMaxHeapTest {
@@ -82,6 +83,41 @@ class BoundedMaxHeapTest {
         heap.offer(1f, 10);
         assertEquals(2, heap.size());
         assertArrayEquals(new int[]{10, 20}, heap.drainIdsAscending());
+    }
+
+    @Test
+    void resetAllowsASmallerCapacityOnTheSameArray() {
+        BoundedMaxHeap heap = BoundedMaxHeap.withMaxCapacity(10);
+        for (int i = 0; i < 10; i++) {
+            heap.offer(i, i);
+        }
+        assertTrue(heap.isFull());
+        assertEquals(9f, heap.worstDistance());
+
+        heap.reset(3);
+        assertEquals(0, heap.size());
+        assertEquals(3, heap.capacity());
+        for (int i = 0; i < 10; i++) {
+            heap.offer(100 - i, i);
+        }
+        assertArrayEquals(new int[]{9, 8, 7}, heap.drainIdsAscending());
+
+        assertThrows(IllegalArgumentException.class, () -> heap.reset(11));
+        assertThrows(IllegalArgumentException.class, () -> heap.reset(0));
+    }
+
+    @Test
+    void drainsPackedEntriesNearestFirst() {
+        BoundedMaxHeap heap = new BoundedMaxHeap(3);
+        heap.offer(5f, 50);
+        heap.offer(1f, 10);
+        heap.offer(3f, 30);
+        assertEquals(Packing.pack(5f, 50), heap.worstPacked());
+
+        long[] out = new long[3];
+        assertEquals(3, heap.drainAscendingPacked(out));
+        assertArrayEquals(new long[]{Packing.pack(1f, 10), Packing.pack(3f, 30),
+                Packing.pack(5f, 50)}, out);
     }
 
     @Test
