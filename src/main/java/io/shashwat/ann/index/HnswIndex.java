@@ -50,11 +50,16 @@ public final class HnswIndex implements VectorIndex {
     private long distanceComputations;
 
     public HnswIndex(VectorDataset base, HnswConfig config) {
+        this(base, config, new ArrayList<>(base.size()), new ArrayList<>(base.size()));
+    }
+
+    private HnswIndex(VectorDataset base, HnswConfig config,
+                      List<List<List<Integer>>> graph, List<Integer> nodeLevel) {
         this.base = base;
         this.config = config;
         this.dim = base.dim();
-        this.graph = new ArrayList<>(base.size());
-        this.nodeLevel = new ArrayList<>(base.size());
+        this.graph = graph;
+        this.nodeLevel = nodeLevel;
         this.rng = new Random(config.seed());
     }
 
@@ -166,7 +171,7 @@ public final class HnswIndex implements VectorIndex {
                 for (int other : theirs) {
                     candidates.add(new Candidate(other, distance(neighbourOffset, other)));
                 }
-                candidates.sort(Comparator.comparingDouble(Candidate::distance));
+                candidates.sort(NEAREST_FIRST);
                 List<Integer> kept = select(neighbourOffset, candidates, cap);
                 theirs.clear();
                 theirs.addAll(kept);
@@ -260,10 +265,8 @@ public final class HnswIndex implements VectorIndex {
     private List<Candidate> searchLayer(float[] query, int queryOffset,
                                         List<Integer> entryPoints, int ef, int layer) {
         Set<Integer> visited = new HashSet<>();
-        PriorityQueue<Candidate> candidates =
-                new PriorityQueue<>(Comparator.comparingDouble(Candidate::distance));
-        PriorityQueue<Candidate> results =
-                new PriorityQueue<>(Comparator.comparingDouble(Candidate::distance).reversed());
+        PriorityQueue<Candidate> candidates = new PriorityQueue<>(NEAREST_FIRST);
+        PriorityQueue<Candidate> results = new PriorityQueue<>(NEAREST_FIRST.reversed());
 
         for (int entry : entryPoints) {
             if (visited.add(entry)) {
@@ -278,7 +281,7 @@ public final class HnswIndex implements VectorIndex {
 
         while (!candidates.isEmpty()) {
             Candidate nearest = candidates.poll();
-            if (results.size() >= ef && nearest.distance() > results.peek().distance()) {
+            if (results.size() >= ef && NEAREST_FIRST.compare(nearest, results.peek()) > 0) {
                 break;
             }
             for (int neighbour : neighbours(nearest.id(), layer)) {
@@ -298,7 +301,7 @@ public final class HnswIndex implements VectorIndex {
         }
 
         List<Candidate> out = new ArrayList<>(results);
-        out.sort(Comparator.comparingDouble(Candidate::distance));
+        out.sort(NEAREST_FIRST);
         return out;
     }
 
@@ -385,8 +388,17 @@ public final class HnswIndex implements VectorIndex {
                 base.data(), base.offset(node), dim);
     }
 
+    /**
+     * Ordering is by distance and then by id, never by distance alone. The tie-break is
+     * not cosmetic: it makes insertion fully deterministic, so the naive and optimized
+     * implementations build the same graph and the optimization table measures speed
+     * rather than an accidental difference in graph quality.
+     */
     private record Candidate(int id, float distance) {
     }
+
+    private static final Comparator<Candidate> NEAREST_FIRST =
+            Comparator.comparingDouble(Candidate::distance).thenComparingInt(Candidate::id);
 
     // ---------------------------------------------------------------- reporting
 
@@ -414,6 +426,19 @@ public final class HnswIndex implements VectorIndex {
         return config;
     }
 
+    /**
+     * A view of this graph searched at a different beam width. The graph itself is shared,
+     * not copied — {@code efSearch} is a search-time parameter only, which is what lets one
+     * build serve a whole recall/latency curve.
+     */
+    public HnswIndex withEfSearch(int efSearch) {
+        HnswIndex view = new HnswIndex(base, config.withEfSearch(efSearch), graph, nodeLevel);
+        view.entryPoint = entryPoint;
+        view.topLayer = topLayer;
+        view.count = count;
+        return view;
+    }
+
     public int topLayer() {
         return topLayer;
     }
@@ -424,6 +449,21 @@ public final class HnswIndex implements VectorIndex {
 
     public long distanceComputations() {
         return distanceComputations;
+    }
+
+    /** Highest layer {@code node} belongs to. */
+    public int levelOf(int node) {
+        return nodeLevel.get(node);
+    }
+
+    /** Copy of a node's neighbour list in one layer. For tests and diagnostics only. */
+    public int[] neighboursOf(int node, int layer) {
+        List<Integer> list = neighbours(node, layer);
+        int[] out = new int[list.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = list.get(i);
+        }
+        return out;
     }
 
     /** Total number of directed edges, and the number in layer 0. */

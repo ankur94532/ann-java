@@ -1,5 +1,6 @@
 package io.shashwat.ann;
 
+import io.shashwat.ann.bench.HnswCommand;
 import io.shashwat.ann.bench.OracleCommand;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorSpecies;
@@ -34,6 +35,7 @@ public final class Main {
                 yield 0;
             }
             case "oracle" -> OracleCommand.run(rest);
+            case "hnsw" -> HnswCommand.run(rest);
             default -> {
                 System.err.println("unknown command: " + args[0]);
                 System.err.println(usage());
@@ -52,6 +54,10 @@ public final class Main {
                   env                            print the hardware/JVM banner
                   oracle [--dataset sift|gist] [--k 10] [--queries N]
                                                  exact search, validated against shipped ground truth
+                  hnsw [--dataset sift|gist] [--m 16] [--efc 200] [--ef 16,32,64,...]
+                       [--selection heuristic|nearestM] [--base N] [--queries N]
+                       [--runs 3] [--csv path]
+                                                 build one HNSW graph and sweep efSearch
                 """;
     }
 

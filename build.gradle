@@ -55,6 +55,7 @@ tasks.withType(Test).configureEach {
     testLogging {
         events 'passed', 'skipped', 'failed'
         exceptionFormat 'full'
+        showStandardStreams = project.hasProperty('showOutput')
     }
 }
 
