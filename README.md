@@ -1,17 +1,182 @@
 # ann-java
 
-Approximate nearest-neighbour indexes (HNSW, IVF-PQ) written from scratch in Java 21,
-benchmarked against FAISS on SIFT1M and GIST1M.
+Approximate nearest-neighbour indexes — **HNSW** and **IVF-PQ** — written from scratch in
+Java 21 with the incubating Vector API, benchmarked against FAISS on SIFT1M under a
+protocol frozen before any index was written.
 
-Work in progress. See [PROTOCOL.md](PROTOCOL.md) for the frozen benchmark protocol.
+The goal was never to beat FAISS. FAISS is years of C++ and hand-written SIMD by a team.
+The goal was to land in the same neighbourhood, understand exactly where the remaining gap
+comes from, and be able to point at it.
 
-## Build
+> **Status: in progress.** Checkpoints 0–4 are complete and every number below is measured.
+> The full parameter sweep, the FAISS comparison plots, and the GIST1M high-dimensional
+> analysis are still running. This README will grow the plots and the analysis section as
+> they land.
 
-```
+---
+
+## Headline numbers so far
+
+SIFT1M, 1,000,000 base vectors × 128 dimensions, the full 10,000-query set, k=10,
+single-threaded, on an Apple M4 Pro. Full protocol in [PROTOCOL.md](PROTOCOL.md).
+
+| index | recall@10 | mean latency | index size |
+|---|---:|---:|---:|
+| HNSW, M=16 efC=200 ef=64 | 0.9703 | 92 µs | 138 MiB |
+| HNSW, M=16 efC=200 ef=128 | 0.9920 | 165 µs | 138 MiB |
+| IVF-PQ, nlist=1024 m=16 nprobe=64 | 0.5741 | 694 µs | 19.7 MiB |
+| exact brute force (the oracle) | 0.9994 | ~14 ms | — |
+
+The two indexes are not competing for the same job, and the table makes that obvious: HNSW
+buys recall with memory, IVF-PQ buys memory with recall. HNSW needs the full-precision
+vectors alongside its 138 MiB graph to compute distances at all, so its true cost is
+626 MiB. IVF-PQ does not keep the vectors, and 19.7 MiB is the whole index — **24.8x
+smaller than the raw data it indexes**.
+
+---
+
+## The recall ceiling is 0.9994, not 1.0
+
+Checkpoint 1 compared this project's own exact search against the ground truth shipped with
+SIFT1M. All 10,000 queries reproduce the shipped 10-NN **distance** sequence exactly, with
+zero queries where the search returned anything genuinely farther. But 646 of them disagree
+on **ids**, because the dataset contains vectors that are exactly equidistant from a query.
+
+Query 93 has base vectors 196106 and 274922 both at squared distance 42192.0 — and on SIFT
+that is not a rounding artefact. Components are integers in [0, 255], so every squared
+distance is an integer below 2²⁴ and float32 represents it with no error at all. Which of
+the two is "the" 10th neighbour is arbitrary; the shipped file and this scan happen to
+choose differently.
+
+**So no configuration in this project can score above 0.999440.** It applies equally to the
+Java indexes and to FAISS, so the comparison is unaffected — but a reported 0.9994 means
+"as good as exact", and it is worth knowing that 1.0 is not on the table.
+
+---
+
+## Where the FAISS gap comes from
+
+Measured against `faiss-cpu` 1.15.0, same machine, same protocol, `omp_set_num_threads(1)`,
+same full query set on both sides:
+
+| | recall@10 | mine | FAISS | gap |
+|---|---:|---:|---:|---:|
+| IVF-PQ nlist=1024 m=16 nprobe=1 | ~0.31 | 23 µs | 25 µs | **1.0x** |
+| IVF-PQ nlist=1024 m=16 nprobe=8 | ~0.54 | 101 µs | 54 µs | 1.9x |
+| IVF-PQ nlist=1024 m=16 nprobe=64 | ~0.574 | 694 µs | 274 µs | 2.5x |
+
+Recall matches to within 0.0004 at nprobe=64. The gap is entirely latency, it grows with
+`nprobe`, and it is concentrated in the list scan — which is now understood: the scan runs
+at about 1.8 cycles per table lookup against a load-throughput limit nearer 1.1.
+
+**An earlier version of this README claimed the Java implementation beat FAISS on recall.
+That was wrong**, and the cause is worth recording: the two sides had been run on different
+query subsets (10,000 against 2,000). On matched query sets FAISS is very slightly ahead.
+Recall varies enough between query subsets to manufacture a difference of about a
+percentage point, which is the same size as the effect being claimed.
+
+---
+
+## Implementation notes
+
+### Distance kernels — [docs/kernels.md](docs/kernels.md)
+
+Scalar and Vector API kernels, tested against each other across dimensions that are not
+multiples of the lane count or the unroll factor.
+
+| | d=128 | d=960 |
+|---|---:|---:|
+| SIMD speedup over scalar | **4.16x** | **10.17x** |
+
+The machine has 128-bit vectors (ARM NEON, 4 float lanes), so 4.16x at d=128 is the lane
+ceiling. **10.17x at d=960 is impossible for a 4-lane machine, which means the scalar
+baseline is the thing that is broken** — and it is. Java may not reassociate a float sum,
+so `sum += d*d` runs at one addition per FP-add *latency* rather than throughput. Four
+independent SIMD accumulators win 4x from the lanes and another 2.6x from breaking a
+dependency chain the scalar version was never allowed to break.
+
+Recorded honestly alongside it: at d=128 the four-accumulator kernel is 0.5 ns *slower*
+than the single-accumulator one, because its reduction tree cannot amortise over 32 steps.
+
+### HNSW optimization — [docs/hnsw-optimization.md](docs/hnsw-optimization.md)
+
+Six implementations of the same algorithm, each measured under the same protocol.
+
+| change | p95 @ ef=64 | build |
+|---|---:|---:|
+| 0. naive reference | 447.5 µs | 779.3 s |
+| 1. flat `int[]` arenas | 357.0 µs | 603.7 s |
+| 2. versioned visited stamps | 182.3 µs | 360.4 s |
+| 3. primitive `long[]` heaps | 160.4 µs | 282.6 s |
+| 4. split traversal / distances | 159.2 µs | 283.1 s |
+| 5. software prefetch | **117.0 µs** | **220.2 s** |
+
+**Recall is identical to six decimal places in every row at every one of six `efSearch`
+values, and the edge count matches to the digit.** That is enforced, not lucky: a test
+asserts the naive and optimized implementations build a *byte-identical* graph. Without it,
+a "faster" row could just as easily be a worse graph that searches less thoroughly.
+
+The interesting rows are the ones that did not go as expected. The flat-arena change I
+was most confident about was worth 20%; the `HashSet` I had not suspected was worth 49%;
+and **step 4 was worth nothing at all** — until step 5, where it turned out to be the
+precondition that makes a software prefetch possible. A table that kept only the changes
+that paid off immediately would have thrown it away.
+
+### IVF-PQ
+
+The largest single win came from a **layout** change, not a faster kernel. Measuring the
+two halves of a query separately showed lookup-table construction at 62% against list scan
+at 38% — so the table build, not the scan, was the problem. Centroid-major codebooks make
+the table 256 calls to a distance kernel over subvectors of 2–16 elements, where the SIMD
+prologue costs more than the arithmetic. Storing the codebooks **dimension-major** and
+vectorising across the *codeword* axis instead gave 5–8x on the table and 1.95x end to end.
+
+A second attempt failed instructively. Four accumulators in the code-scanning loop — the
+exact fix that wins 2.6x in the L2 kernel — measured as **nothing**, because the caller's
+loop over codes already supplies all the instruction-level parallelism the processor needs.
+It was reverted, and the reasoning is recorded rather than the code.
+
+---
+
+## Reproducing
+
+```bash
+./scripts/download_sift.sh                 # ~168 MB, into data/
 ./gradlew build
-./gradlew run          # prints version + environment banner
+./gradlew run --args="oracle --dataset sift"          # Checkpoint 1: validate the loader
+./gradlew run --args="hnsw --ef 16,32,64,128,256,512" # HNSW recall/latency curve
+./gradlew run --args="ivfpq --nlist 1024 --m 16"      # IVF-PQ recall/latency curve
+./gradlew run --args="sweep --dataset sift"           # the full sweep (hours, resumable)
+./gradlew jmh -PjmhArgs="DistanceBenchmark"           # kernel microbenchmarks
 ```
 
-Requires JDK 21 (Gradle resolves a toolchain). The Vector API is an incubator module,
-so every JVM invocation needs `--add-modules jdk.incubator.vector`; the build files do
-this for you.
+FAISS baseline and plots:
+
+```bash
+./scripts/setup_python.sh
+./.venv/bin/python scripts/faiss_bench.py --dataset sift --csv docs/results/faiss-sift1m.csv
+./.venv/bin/python scripts/plot_results.py docs/results/*.csv --out docs/plots
+```
+
+Requires JDK 21; Gradle resolves the toolchain. The Vector API is an incubator module, so
+every JVM invocation needs `--add-modules jdk.incubator.vector` — the build files do this.
+
+**Hardware these numbers come from:** Apple M4 Pro (10 performance + 4 efficiency cores),
+48 GiB, macOS 26.6, Temurin OpenJDK 21.0.9, 128-bit float vectors. The SIMD ratios in
+particular are not portable: an AVX-512 host runs the same source 16 lanes wide.
+
+---
+
+## Limitations
+
+* **The recall ceiling is 0.9994**, for the tie reason above.
+* **Single-threaded throughout**, build and search, on both sides. That is the only setting
+  in which "mine took X and FAISS took Y" means anything, but it is not how either would be
+  deployed.
+* **The IVF-PQ search gap to FAISS is 2.5x** at high `nprobe` and is not closed. It is
+  localised to the list scan and quantified, not hand-waved.
+* **No OPQ rotation**, so the product quantizer assumes the subspaces are uncorrelated. SIFT
+  satisfies that reasonably; GIST is expected not to.
+* **`m` must divide the dimension**, so on SIFT the code sizes available are 8, 16, 32, 64
+  and 128 bytes and nothing between.
+* Deletion, updates, and persistence are all unimplemented. This indexes a fixed set once.
