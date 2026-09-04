@@ -86,6 +86,7 @@ public final class FastHnswIndex implements Hnsw {
     private int[] entryScratch;
     private int[] selectionScratch;
     private int[] pruneScratch;
+    private int[] neighbourScratch;
     private long[] selectionCandidates;
 
     public FastHnswIndex(VectorDataset base, HnswConfig config) {
@@ -395,11 +396,18 @@ public final class FastHnswIndex implements Hnsw {
             int[] arena = arena(layer);
             int slot = degreeSlot(Packing.id(nearest), layer);
             int deg = arena[slot];
+
+            // Phase 1: the whole neighbour list, straight out of one or two cache lines.
+            int pending = 0;
             for (int i = 1; i <= deg; i++) {
                 int neighbour = arena[slot + i];
-                if (!visit(neighbour)) {
-                    continue;
+                if (visit(neighbour)) {
+                    neighbourScratch[pending++] = neighbour;
                 }
+            }
+            // Phase 2: the distances, with every address already known.
+            for (int i = 0; i < pending; i++) {
+                int neighbour = neighbourScratch[i];
                 float d = distance(query, queryOffset, neighbour);
                 // Strictly closer than the worst kept, matching HnswIndex exactly: a node
                 // exactly tied with the worst is not explored, whatever its id.
@@ -422,6 +430,7 @@ public final class FastHnswIndex implements Hnsw {
             entryScratch = new int[width];
             selectionScratch = new int[Math.max(m0, width)];
             pruneScratch = new int[Math.max(m0, width)];
+            neighbourScratch = new int[m0];
             selectionCandidates = new long[Math.max(m0 + 1, width)];
         }
     }
