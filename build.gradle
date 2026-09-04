@@ -59,19 +59,20 @@ tasks.withType(Test).configureEach {
     }
 }
 
+// ./gradlew run -Pjfr=true  ->  writes build/ann.jfr
+//
+// This has to be folded into applicationDefaultJvmArgs rather than added with jvmArgs()
+// on the run task: jvmArgs() sets an explicit value that REPLACES the convention the
+// application plugin supplies, so adding the recording flag that way silently drops
+// --add-modules jdk.incubator.vector and the heap size with it, and the run dies with
+// NoClassDefFoundError before it reaches main.
+def jfrArgs = project.hasProperty('jfr')
+        ? ['-XX:StartFlightRecording=settings=profile,filename=build/ann.jfr,dumponexit=true']
+        : []
+
 application {
     mainClass = 'io.shashwat.ann.Main'
-    applicationDefaultJvmArgs = incubatorArgs + [
-            '-Xmx12g',
-            // JFR: start recording on demand with -Pjfr=true (see the jfrArgs block below).
-    ]
-}
-
-// ./gradlew run -Pjfr=true  ->  writes build/ann.jfr
-tasks.named('run', JavaExec) {
-    if (project.hasProperty('jfr')) {
-        jvmArgs '-XX:StartFlightRecording=settings=profile,filename=build/ann.jfr,dumponexit=true'
-    }
+    applicationDefaultJvmArgs = incubatorArgs + ['-Xmx12g'] + jfrArgs
 }
 
 tasks.register('jmh', JavaExec) {

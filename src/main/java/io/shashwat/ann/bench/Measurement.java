@@ -28,8 +28,8 @@ public record Measurement(
         return String.join(",",
                 harness,
                 dataset,
-                index,
-                "\"" + params + "\"",
+                quote(index),
+                quote(params),
                 Integer.toString(k),
                 String.format("%.6f", recallAtK),
                 String.format("%.3f", meanLatencyUs),
@@ -40,6 +40,21 @@ public record Measurement(
                 Integer.toString(queries),
                 Integer.toString(runs),
                 timestamp);
+    }
+
+    /**
+     * RFC 4180 quoting. Both {@code index} and {@code params} routinely contain commas —
+     * {@code hnsw(M=16,efC=200,ef=64)} — and an unquoted comma there silently shifts every
+     * column after it, which no reader can detect and every reader gets wrong.
+     */
+    private static String quote(String field) {
+        if (field == null) {
+            return "";
+        }
+        if (field.indexOf(',') < 0 && field.indexOf('"') < 0 && field.indexOf('\n') < 0) {
+            return field;
+        }
+        return '"' + field.replace("\"", "\"\"") + '"';
     }
 
     @Override

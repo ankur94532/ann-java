@@ -81,6 +81,63 @@ class BenchHarnessTest {
                 "params containing commas must be quoted: " + lines.get(1));
         assertTrue(lines.get(1).startsWith("java,SIFT1M,hnsw,"));
         assertTrue(lines.get(1).contains("0.987654"));
+
+        // The whole row must survive a real CSV parser, not just look right.
+        try (java.io.BufferedReader reader = Files.newBufferedReader(file)) {
+            reader.readLine();
+            String[] fields = parseCsvLine(reader.readLine());
+            assertEquals(14, fields.length, java.util.Arrays.toString(fields));
+            assertEquals("hnsw", fields[2]);
+            assertEquals("M=16,efC=200,ef=64", fields[3]);
+            assertEquals("10", fields[4]);
+            assertEquals("1024", fields[9]);
+        }
+    }
+
+    /** An index name with commas in it must round-trip too - that is the bug this catches. */
+    @Test
+    void quotesTheIndexNameAsWellAsTheParams(@TempDir Path tmp) throws IOException {
+        Path file = tmp.resolve("q.csv");
+        Measurement m = new Measurement("java", "SIFT1M", "hnsw(M=16,efC=200,ef=64)",
+                "M=16,efC=200,ef=64", 10, 0.97, 1, 2, 3, 4, 5, 6, 3, "now");
+        try (CsvSink sink = new CsvSink(file)) {
+            sink.write(m);
+        }
+        String[] fields = parseCsvLine(Files.readAllLines(file).get(1));
+        assertEquals(14, fields.length, java.util.Arrays.toString(fields));
+        assertEquals("hnsw(M=16,efC=200,ef=64)", fields[2]);
+        assertEquals("M=16,efC=200,ef=64", fields[3]);
+    }
+
+    /** Minimal RFC 4180 reader, so the test does not trust the writer's own idea of quoting. */
+    private static String[] parseCsvLine(String line) {
+        java.util.List<String> fields = new java.util.ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean quoted = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (quoted) {
+                if (c == '"') {
+                    if (i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                        current.append('"');
+                        i++;
+                    } else {
+                        quoted = false;
+                    }
+                } else {
+                    current.append(c);
+                }
+            } else if (c == '"') {
+                quoted = true;
+            } else if (c == ',') {
+                fields.add(current.toString());
+                current.setLength(0);
+            } else {
+                current.append(c);
+            }
+        }
+        fields.add(current.toString());
+        return fields.toArray(new String[0]);
     }
 
     /** Returns only the first k/2 results, to exercise the short-result path. */

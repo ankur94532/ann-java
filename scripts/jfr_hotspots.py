@@ -19,7 +19,7 @@ from collections import Counter
 FRAME = re.compile(r"^\s+(\S+?)\.(\w+)\(")
 
 
-def parse(path, package_filter):
+def parse(path, package_filter, under=None):
     self_counts = Counter()
     total_counts = Counter()
     samples = 0
@@ -28,6 +28,10 @@ def parse(path, package_filter):
     def flush():
         nonlocal samples
         if not frames:
+            return
+        # A build and a search phase land in one recording; `under` keeps only the
+        # samples taken inside the phase being profiled.
+        if under and not any(under in frame for frame in frames):
             return
         samples += 1
         for i, frame in enumerate(frames):
@@ -74,9 +78,11 @@ def main():
     parser.add_argument("samples")
     parser.add_argument("--package", default="", help="only count frames containing this")
     parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--under", default=None,
+                        help="only count samples whose stack contains this frame")
     args = parser.parse_args()
 
-    self_counts, total_counts, samples = parse(args.samples, args.package)
+    self_counts, total_counts, samples = parse(args.samples, args.package, args.under)
     if samples == 0:
         raise SystemExit("no execution samples found; was the recording made with "
                          "settings=profile?")
