@@ -12,10 +12,16 @@ The goal was never to beat FAISS. FAISS is years of C++ and hand-written SIMD by
 The goal was to land in the same neighbourhood, understand exactly where the remaining gap
 comes from, and be able to point at it.
 
-> **Status: in progress.** Checkpoints 0–4 are complete and every number below is measured.
-> The full parameter sweep, the FAISS comparison plots, and the GIST1M high-dimensional
-> analysis are still running. This README will grow the plots and the analysis section as
-> they land.
+> **These results are aarch64-specific.** Everything here was measured on an Apple M4 Pro,
+> where both this project and FAISS get 128-bit vectors — 4 float lanes. On an x86 host with
+> AVX-512, FAISS's hand-written intrinsics get 16 lanes against the same 4 the JDK Vector API
+> would offer, and the latency comparisons below could plausibly reverse. Treat the HNSW
+> result as "on this machine", not as a portable claim. The *methodology* — the frozen
+> protocol, the tie ceiling, the optimization table — travels; the ratios may not.
+
+> **Status: in progress.** Checkpoints 0–5 are complete and every number below is measured.
+> The GIST1M high-dimensional run is under way; its results and the analysis section land
+> when it finishes.
 
 ---
 
