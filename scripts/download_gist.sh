@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Downloads and unpacks GIST1M (960-dim, the Phase 6 hard case) into data/gist/.
-# ~2.6 GB compressed, ~3.9 GB unpacked.
+# ~2.6 GB compressed, 5.8 GB unpacked. The extra is gist_learn.fvecs (1.9 GB), a
+# separate training set the tarball ships and this project never reads: the PQ
+# codebooks are trained on residuals sampled from the base set itself.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

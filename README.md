@@ -6,9 +6,10 @@ GIST1M under a protocol frozen before either index was written.**
 The headline: on SIFT1M this HNSW reaches **recall@10 of 0.9920 in 165 µs per query**
 single-threaded — matching the exact answer on 99.2% of neighbours over a million vectors —
 and beats `IndexHNSWFlat` on latency at all 36 swept configurations while computing 2% *more*
-distances. On GIST1M at 960 dimensions that advantage reverses, and the more useful result is
-why: **this implementation's bookkeeping is faster and its distance kernel is slower**, so
-which one wins depends on how much arithmetic sits behind each candidate.
+distances. On GIST1M at 960 dimensions that advantage inverts at low degree and survives only at
+M=32, and the more useful result is why: **this implementation's bookkeeping is faster and
+its distance kernel is slower**, so which one wins depends on how much arithmetic sits behind
+each candidate.
 
 > **These numbers are aarch64-specific.** Measured on an Apple M4 Pro, where both sides get
 > 128-bit vectors — 4 float lanes. On an x86 host with AVX-512, FAISS's hand-written
@@ -43,7 +44,7 @@ is quantization error, not search effort.
 
 GIST1M, 960 dimensions, same code and same grid. The orange lines now terminate at ≈0.28 —
 IVF-PQ returns barely a quarter of the true neighbours and no `nprobe` recovers it. Blue
-still reaches 0.99. **The two index families do not degrade alike.**
+still reaches 0.988. **The two index families do not degrade alike.**
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/plots/recall-memory-sift1m-dark.png">
@@ -70,7 +71,7 @@ sharply and in opposite directions: HNSW builds **1.09–1.23x faster** here, IV
 
 Cheapest configuration reaching each recall target, each side at its own best settings.
 
-**SIFT1M** — 1M × 128, 10,000 queries, k=10, single-threaded.
+**SIFT1M** — 1M × 128, the full 10,000-query set, k=10, single-threaded.
 
 | target | index | configuration | recall@10 | mean latency | FAISS | index size |
 |---|---|---|---:|---:|---:|---:|
@@ -81,7 +82,9 @@ Cheapest configuration reaching each recall target, each side at its own best se
 | max | IVF-PQ | nlist=4096, m=32, nprobe=64 | 0.7380 | 649 µs | 268 µs | **36.5 MiB** |
 | — | exact brute force | — | 0.9994 | ~14 ms | — | — |
 
-**GIST1M** — 1M × 960, 1,000 queries, k=10, single-threaded.
+**GIST1M** — 1M × 960, **the full 1,000-query set shipped with GIST1M**, k=10,
+single-threaded. (SIFT1M ships 10,000 queries and GIST1M ships 1,000; both tables use
+the whole shipped set, and both sides of each comparison use the same one.)
 
 | target | index | configuration | recall@10 | mean latency | FAISS | index size |
 |---|---|---|---:|---:|---:|---:|
@@ -90,7 +93,7 @@ Cheapest configuration reaching each recall target, each side at its own best se
 | max | HNSW | M=32, efC=400, ef=512 | 0.9884 | 4037 µs | 4388 µs | 260 MiB |
 | max | IVF-PQ | nlist=4096, m=32, nprobe=64 | **0.2821** | 1932 µs | 1897 µs | 50.3 MiB |
 
-**0.9994 and 0.99920 are the ceilings, not 1.0.** The datasets contain vectors equidistant
+**0.999440 and 0.999200 are the ceilings, not 1.0.** The datasets contain vectors equidistant
 from a query, so the top-10 *ids* are not unique — see below. HNSW reaches the SIFT ceiling
 exactly.
 
@@ -141,7 +144,10 @@ ratio, this project ÷ FAISS, on GIST1M:
 | 64 | 1.47 | 1.28 | 0.98 |
 | 512 | 1.30 | 1.26 | **0.82** |
 
-On SIFT1M the same ratio runs 0.63–0.90 everywhere. Three trends explain both tables:
+On SIFT1M the same ratio runs 0.63–0.90 everywhere. So GIST does not simply flip the
+result — at M=32 this project is still level or ahead (0.82 at ef=512, and 4037 µs against
+4388 at the maximum-recall setting). It is the same three-gradient story, with dimension
+pushing one way and `M` and `efSearch` pushing the other:
 
 * **↑ dimension → FAISS gains.** More arithmetic per candidate, bookkeeping unchanged. The
   distance kernel is theirs.
@@ -259,7 +265,8 @@ Kept because a table of only the wins is not a record of what happened.
 
 ```bash
 ./scripts/download_sift.sh                    # ~168 MB
-./scripts/download_gist.sh                    # ~2.6 GB
+./scripts/download_gist.sh                    # ~2.6 GB download, 5.8 GB unpacked
+                                              # (includes a 1.9 GB learn set this project never uses)
 ./gradlew build && ./gradlew test
 
 ./gradlew run --args="oracle --dataset sift"  # validate the loader against ground truth
