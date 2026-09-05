@@ -42,17 +42,26 @@ def load(path):
 
 
 def deciles(dk, recall, buckets=10):
+    """Mean recall per decile of neighbourhood distance, indexed by decile rather than
+    by the distance itself.
+
+    The raw distance is not comparable across datasets - SIFT's L2 distances run 140-280
+    and GIST's run 0.9-1.4 - so plotting both against absolute distance crushes one into a
+    vertical line and invites a comparison that means nothing. The decile rank asks the
+    question that does transfer: how does recall fare for queries in the sparsest tenth of
+    *their own* distribution?
+    """
     edges = np.quantile(dk, np.linspace(0, 1, buckets + 1))
-    edges[-1] += 1e-6
-    centres, means, counts = [], [], []
+    edges[-1] += abs(edges[-1]) * 1e-6 + 1e-9
+    ranks, means, counts = [], [], []
     for i in range(buckets):
         mask = (dk >= edges[i]) & (dk < edges[i + 1])
         if not mask.any():
             continue
-        centres.append(float(np.median(dk[mask])))
+        ranks.append(i + 1)
         means.append(float(recall[mask].mean()))
         counts.append(int(mask.sum()))
-    return np.array(centres), np.array(means), np.array(counts)
+    return np.array(ranks), np.array(means), np.array(counts)
 
 
 def style_axes(ax, theme, xlabel, ylabel, title, subtitle):
@@ -98,11 +107,13 @@ def main():
         theme = THEMES[mode]
         fig, ax = plt.subplots(figsize=(8, 5.2))
         style_axes(ax, theme,
-                   "distance from the query to its 10th true neighbour",
+                   "decile of distance to the 10th true neighbour "
+                   "(1 = densest neighbourhood, 10 = sparsest)",
                    "mean recall@10",
                    f"Where recall is lost, {args.dataset}",
-                   "queries bucketed into deciles of neighbourhood distance; "
-                   "right-hand buckets are queries in sparse regions")
+                   "each dataset bucketed into deciles of its own distribution, since the "
+                   "absolute distances are not comparable")
+        ax.set_xticks(range(1, 11))
         for i, (path, label) in enumerate(zip(args.csv, labels)):
             dk, recall, _ = load(path)
             centres, means, counts = deciles(dk, recall)
