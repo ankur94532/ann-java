@@ -21,6 +21,14 @@ to land in the same neighbourhood and be able to point at exactly where the rema
 
 ---
 
+## A complete guide, for readers new to any of this
+
+**[docs/guide/ann-java-guide.pdf](docs/guide/ann-java-guide.pdf)** — a 36-page illustrated
+walkthrough written to be readable with no prior knowledge of vector search. It defines every
+term on first use, explains how HNSW and IVF-PQ actually work with diagrams, walks through every
+optimization and every failure, describes every file in the repository, and ends with a glossary.
+Regenerate it with `scripts/build_guide.sh`.
+
 ## The curves
 
 Blue is HNSW, orange is IVF-PQ; solid is this project, dashed is FAISS. Each line is the

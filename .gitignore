@@ -22,6 +22,9 @@ __pycache__/
 .venv/
 venv/
 
+# The guide PDF is a deliverable, not build output - keep it.
+!docs/guide/*.pdf
+
 # Editors / OS
 .idea/
 *.iml
