@@ -130,7 +130,7 @@ GIST needs `ef=512` to reach roughly what SIFT reaches at `ef=128`, and each of 
 queries costs about five times as much. The two effects compound rather than trade off:
 recall falls at fixed effort, *and* the effort needed to recover it rises.
 
-## 6. The Java/FAISS gap is not one number, it has three gradients
+## 6. The Java/FAISS gap is not one number, it has two gradients and a retraction
 
 The HNSW comparison reverses between datasets, and reading it as a single ratio hides what
 is going on. Mean-latency ratio, this project divided by FAISS — below 1 means this project
@@ -139,27 +139,43 @@ is faster:
 <!-- BEGIN GENERATED: analysis-ratio -->
 | GIST1M, ef | M=8 | M=16 | M=32 |
 |---:|---:|---:|---:|
-| 16 | 1.49 | 1.35 | 0.95 |
-| 64 | 1.47 | 1.28 | 0.90 |
-| 512 | 1.30 | 1.26 | 0.78 |
+| 16 | 1.49 | 1.68 † | *(0.95)* † |
+| 64 | 1.47 | 1.57 † | *(0.90)* † |
+| 512 | 1.30 | 1.44 † | *(0.78)* † |
 
-On SIFT1M the same ratio runs 0.63–0.92 everywhere. Three consistent gradients explain both
-tables at once:
+Mean over the three `efConstruction` values, counting only rows the measurement artefact
+described in [README.md](../README.md#limitations) did not touch. † marks a cell that had
+to drop at least one row; a cell in *(parentheses)* had no clean rows at all. 24 of 54 GIST1M
+configurations are affected, and every configuration in which this project beats FAISS on GIST1M
+is one of them — so **no GIST1M cell below 1.0 here is trustworthy**, and the M=32 column in
+particular cannot support the claim it was once used for.
+
+On SIFT1M the same ratio runs 0.63–0.92 across all 54 configurations, and on the
+30 unaffected GIST1M configurations it runs 1.28–1.74. Two consistent gradients and one reversal
+explain both tables at once — the third having reversed once the affected rows were
+excluded:
 <!-- END GENERATED: analysis-ratio -->
 
 <!-- BEGIN GENERATED: analysis-gradients -->
-* **More dimensions → FAISS gains.** Distance work per candidate grows while bookkeeping per
-  candidate does not. The distance kernel is FAISS's advantage.
-* **More `efSearch` → this project gains.** More candidates pass through the visited stamps
-  and the two heaps. That bookkeeping is this project's advantage, which is exactly what
-  steps 2 and 3 of [hnsw-optimization.md](hnsw-optimization.md) bought.
-* **More `M` → this project gains.** A higher degree means more pending neighbours per hop,
-  and the software prefetch of step 5 issues their loads together. At 960 dimensions each
-  miss costs 3,840 bytes, so prefetching pays most where misses are dearest.
+* **↑ dimension → FAISS gains.** More arithmetic per candidate, bookkeeping unchanged.
+  Mean ratio 0.82 on SIFT1M against 1.50 on GIST1M's unaffected rows. The distance
+  kernel is theirs.
+* **↑ efSearch → this project gains.** More candidates through the visited stamps and the two
+  heaps, which is the bookkeeping steps 2 and 3 bought. Mean ratio falls from 0.89 at
+  ef=16 to 0.69 at ef=512 on SIFT1M, and from 1.57 to 1.36 on GIST1M.
+* **↑ M → FAISS gains — the opposite of what this README used to claim.** The earlier
+  text argued that a higher degree gives the step-5 software prefetch more to issue at once, and
+  read a win at M=32 on GIST1M as confirmation. Those M=32 rows turned out to be the measurement
+  artefact. On data the artefact never touched the gradient runs the other way: mean ratio
+  0.79 → 0.84 from M=8 to M=32 on SIFT1M, and 1.43 → 1.57 from M=8 to
+  M=16 on GIST1M. Whatever the prefetch buys against this project's own earlier versions, it
+  does not show up as a gain against FAISS as degree rises.
 <!-- END GENERATED: analysis-gradients -->
 
-SIFT is the regime where all three favour this implementation. GIST at M=8 is the worst
-case — expensive distances, little to prefetch — and GIST at M=32 is back to parity.
+SIFT is the regime where both surviving gradients favour this implementation, and GIST is the
+regime where dimension overwhelms them. There is no longer a corner of the grid where this
+implementation is ahead on GIST1M: the M=32 cells that once said so are the measurement
+artefact, and on unaffected rows FAISS is faster at every GIST1M configuration.
 
 **This also supplies the control the SIFT-only data could not.** Sweeping `M` alone would
 confound kernel work, hop count and cache behaviour. Sweeping dimension at fixed `M` and

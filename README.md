@@ -7,8 +7,9 @@ GIST1M under a protocol frozen before either index was written.**
 The headline: on SIFT1M this HNSW reaches **recall@10 of 0.9920 in 165 µs per query**
 single-threaded — matching the exact answer on 99.2% of neighbours over a million vectors —
 and beats `IndexHNSWFlat` on latency at all 54 swept configurations (201 µs against 165 at
-the same settings) while computing 0.8–2.4% *more* distances. On GIST1M at 960 dimensions that advantage
-inverts at low degree and survives only at M=32, and the more useful result is why: **this implementation's
+the same settings) while computing 0.8–2.4% *more* distances. On GIST1M at 960 dimensions the advantage
+reverses: on the 30 configurations measured before the machine artefact described below, this
+implementation is 1.28–1.74x FAISS's latency. The more useful result is why: **this implementation's
 bookkeeping is faster and its distance kernel is slower**, so which one wins depends on how much
 arithmetic sits behind each candidate.
 <!-- END GENERATED: headline -->
@@ -58,7 +59,7 @@ still reaches 0.988. **The two index families do not degrade alike.**
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/plots/recall-memory-sift1m-dark.png">
-  <img alt="SIFT1M recall against index memory. IVF-PQ occupies 12-37 MiB, HNSW 77-260 MiB." src="docs/plots/recall-memory-sift1m-light.png">
+  <img alt="SIFT1M recall against index memory. IVF-PQ occupies 12-37 MiB, HNSW 77-260 MiB before the raw vectors it also needs." src="docs/plots/recall-memory-sift1m-light.png">
 </picture>
 
 <!-- BEGIN GENERATED: memory-spans -->
@@ -109,14 +110,17 @@ the whole shipped set, and both sides of each comparison use the same one.)
 |---|---|---|---:|---:|---:|---:|
 | ≥0.90 | HNSW | M=32,efC=200,ef=128 | 0.9132 | 1,134 µs | **914 µs<br><sub>M=16,efC=200,ef=256, r=0.9223</sub>** | 259.7 MiB |
 | ≥0.95 | HNSW | M=32,efC=200,ef=256 | 0.9602 | 2,013 µs | **1,695 µs<br><sub>M=16,efC=200,ef=512, r=0.9586</sub>** | 259.7 MiB |
-| max | HNSW | M=32,efC=400,ef=512 | 0.9884 | **4,037 µs** | 5,806 µs | 259.7 MiB |
-| max | IVF-PQ | nlist=4096,m=32,nprobe=64 | 0.2821 | 1,932 µs | **673 µs** | 50.3 MiB |
+| max | HNSW | M=32,efC=400,ef=512 | 0.9884 | 4,037 µs | 5,806 µs † | 259.7 MiB |
+| max | IVF-PQ | nlist=4096,m=32,nprobe=64 | 0.2821 | 1,932 µs | **673 µs †** | 50.3 MiB |
+
+† FAISS row from a build block affected by the measurement artefact — see [Limitations](#limitations). Its latency is inflated, so this comparison understates FAISS.
 <!-- END GENERATED: results-gist -->
 
 <!-- BEGIN GENERATED: ceiling -->
 **0.999440 and 0.999200 are the ceilings, not 1.0.** The datasets contain vectors equidistant
 from a query, so the top-10 *ids* are not unique — see below. This HNSW reaches 0.999420,
-2 slots in 100,000 short of it.
+2 slots in 100,000 short of it. FAISS reaches 0.999450 — *above* the figure
+PROTOCOL.md §1 calls a hard bound, which is itself a result: see [Limitations](#limitations).
 <!-- END GENERATED: ceiling -->
 
 ---
@@ -143,7 +147,7 @@ not unique:
 The comparison is therefore tolerance-based and one-sided: finding something *closer* than
 the ground truth names is never an error.
 
-### Where the FAISS gap comes from — three gradients, not one number
+### Where the FAISS gap comes from — two gradients, and one that had to be retracted
 
 Beating FAISS is not a credible outcome for a from-scratch implementation, so it was treated
 as a defect in the comparison until it survived three checks:
@@ -165,25 +169,39 @@ ratio, this project ÷ FAISS, on GIST1M:
 <!-- BEGIN GENERATED: ratio-gist -->
 | ef | M=8 | M=16 | M=32 |
 |---:|---:|---:|---:|
-| 16 | 1.49 | 1.35 | 0.95 |
-| 64 | 1.47 | 1.28 | 0.90 |
-| 512 | 1.30 | 1.26 | 0.78 |
+| 16 | 1.49 | 1.68 † | *(0.95)* † |
+| 64 | 1.47 | 1.57 † | *(0.90)* † |
+| 512 | 1.30 | 1.44 † | *(0.78)* † |
+
+Mean over the three `efConstruction` values, **counting only rows the measurement artefact
+did not touch**. † marks a cell that had to drop at least one row; a cell in
+*(parentheses)* had no clean rows at all and is shown for reference only, not relied on.
+24 of 54 GIST1M configurations are affected, and **every configuration in which this
+project beats FAISS on GIST1M is one of them** — see [Limitations](#limitations).
 <!-- END GENERATED: ratio-gist -->
 
 <!-- BEGIN GENERATED: ratio-sift -->
-On SIFT1M the same ratio runs 0.63–0.92 everywhere. So GIST does not simply flip the
-result — at M=32 this project is still level or ahead (0.78 at ef=512, and 4,037 µs against
-5,806 at the maximum-recall setting). It is the same three-gradient story, with dimension
-pushing one way and `M` and `efSearch` pushing the other:
+On SIFT1M the same ratio runs 0.63–0.92 across all 54 configurations — this
+project is faster everywhere. On GIST1M, restricted to the 30 configurations the artefact
+did not touch, it runs 1.28–1.74 — FAISS is faster everywhere. The two datasets bracket
+the crossover rather than contradicting each other. Two gradients hold across both, and a
+third runs opposite to what this README once claimed:
 <!-- END GENERATED: ratio-sift -->
 
 <!-- BEGIN GENERATED: gradients -->
-* **↑ dimension → FAISS gains.** More arithmetic per candidate, bookkeeping unchanged. The
-  distance kernel is theirs.
+* **↑ dimension → FAISS gains.** More arithmetic per candidate, bookkeeping unchanged.
+  Mean ratio 0.82 on SIFT1M against 1.50 on GIST1M's unaffected rows. The distance
+  kernel is theirs.
 * **↑ efSearch → this project gains.** More candidates through the visited stamps and the two
-  heaps. That bookkeeping is this project's, bought by steps 2 and 3 below.
-* **↑ M → this project gains.** More pending neighbours per hop for the step-5 software
-  prefetch to issue together, and at 960 dimensions each miss costs 3,840 bytes.
+  heaps, which is the bookkeeping steps 2 and 3 bought. Mean ratio falls from 0.89 at
+  ef=16 to 0.69 at ef=512 on SIFT1M, and from 1.57 to 1.36 on GIST1M.
+* **↑ M → FAISS gains — the opposite of what this README used to claim.** The earlier
+  text argued that a higher degree gives the step-5 software prefetch more to issue at once, and
+  read a win at M=32 on GIST1M as confirmation. Those M=32 rows turned out to be the measurement
+  artefact. On data the artefact never touched the gradient runs the other way: mean ratio
+  0.79 → 0.84 from M=8 to M=32 on SIFT1M, and 1.43 → 1.57 from M=8 to
+  M=16 on GIST1M. Whatever the prefetch buys against this project's own earlier versions, it
+  does not show up as a gain against FAISS as degree rises.
 <!-- END GENERATED: gradients -->
 
 Running both datasets is what separates these. Sweeping `M` alone would confound kernel work,
@@ -315,6 +333,7 @@ Kept because a table of only the wins is not a record of what happened.
 
 python3 scripts/readme_tables.py            # regenerate every number in this file
 python3 scripts/readme_tables.py --check    # fail if any of them has drifted
+python3 scripts/readme_tables.py --audit    # show the suspect-row evidence
 ```
 
 Every CSV behind every number is committed under [docs/results/](docs/results/), so the plots
@@ -336,7 +355,23 @@ resolves the toolchain. The Vector API is an incubator module, so every JVM invo
 
 <!-- BEGIN GENERATED: limitations -->
 * **The metric's ceiling is 0.999440 on SIFT and 0.999200 on GIST**, because ids are not
-  unique under ties. The searches themselves are exact.
+  unique under ties. The searches themselves are exact. PROTOCOL.md §1 calls this a hard
+  bound that "no configuration can do better" than, and **that is wrong**: FAISS scores
+  0.999450 on SIFT1M, one slot in 100,000 above it. The figure is the tie-breaking
+  this project's oracle happened to choose, not an upper bound on any index. The protocol is
+  frozen, so the error is recorded here rather than edited there.
+* **The FAISS GIST1M sweep contains a measurement artefact, and it favours this project.**
+  Partway through the run — between the `M=16,efC=200` and `M=16,efC=400` builds, around
+  03:30–04:00 on 5 Sep — FAISS's wall clock steps up by roughly 1.5–2x and stays there.
+  Search latency and *build* time step together on the same block, and the two share no code,
+  so the cause is the machine rather than either implementation. 24 of 54 GIST1M HNSW
+  configurations and **every** GIST1M IVF-PQ configuration sit after the step; they are marked
+  † and excluded from every GIST1M range quoted above. **Every configuration in which this
+  project beat FAISS on GIST1M lies in the affected region**, so the earlier claim that this
+  implementation is level or ahead at M=32 on GIST1M is withdrawn — on the 30 unaffected
+  configurations FAISS is faster in all of them. Re-running the four affected builds is the fix
+  and has not been done; until it is, no GIST1M latency comparison here should be read as
+  favouring this project.
 * **Single-threaded throughout**, build and search, on both sides. It is the only setting in
   which "mine took X and FAISS took Y" means anything, but it is not how either would be
   deployed, and it excludes FAISS's batched search paths entirely.
@@ -344,9 +379,15 @@ resolves the toolchain. The Vector API is an incubator module, so every JVM invo
 * **IVF-PQ search is 2.5–2.9x slower than FAISS** at `nprobe`=64 on SIFT1M
   (2.6–6.9x on GIST1M), localised to the list scan at ~1.8 cycles per table lookup
   against a load-throughput limit nearer 1.1.
+  Every FAISS GIST1M IVF-PQ row was measured after the step, so both GIST1M
+  figures here are **lower bounds on the gap**: the artefact inflates FAISS,
+  which flatters this implementation.
 * **IVF-PQ build is 4.6–8.7x slower on SIFT1M and 11.8–24.3x slower on GIST1M**,
   and the cause is understood: closing it needs a GEMM microkernel with register-level tiling
   written against the Vector API, since rule 4 forbids linking a BLAS. Not attempted.
+* **HNSW build is 1.09–1.23x faster than FAISS on SIFT1M, but
+  1.36–1.53x *slower* on GIST1M** (unaffected blocks only) — the same
+  dimension gradient that governs the search comparison, showing up in construction as well.
 * **No OPQ rotation**, so the product quantizer assumes the subspaces are uncorrelated. GIST
   shows what that costs. A learned rotation is the standard fix and is the single most
   valuable thing missing here — plausibly enough to clear 0.80 recall at m=32, which would
