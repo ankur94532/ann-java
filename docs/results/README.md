@@ -20,9 +20,14 @@ harness,dataset,index,params,k,recall_at_k,mean_latency_us,p95_latency_us,
 build_seconds,index_bytes,base_bytes,queries,runs,timestamp
 ```
 
+<!-- BEGIN GENERATED: recall-column -->
 * `recall_at_k` — mean set overlap against the shipped ground truth, per PROTOCOL.md §3.
-  The attainable maximum is **0.999440**, not 1.0, because the dataset contains exactly
-  tied neighbours; see PROTOCOL.md §1.
+  Exact search scores **0.999440** on SIFT1M, not 1.0, because the dataset contains exactly
+  tied neighbours and the shipped ids break those ties one particular way (PROTOCOL.md §1).
+  That is not an upper bound: an index that happens to break ties the way the shipped file
+  does can score higher, and FAISS's `IndexHNSWFlat` reaches **0.999450** in
+  `faiss-sift1m.csv`.
+<!-- END GENERATED: recall-column -->
 * `mean_latency_us` / `p95_latency_us` — single-threaded, one query per call, median of
   three measured passes over the full query set after a discarded warm-up pass.
 * `build_seconds` — single-threaded construction, excluding dataset load. For IVF-PQ
@@ -38,6 +43,21 @@ build_seconds,index_bytes,base_bytes,queries,runs,timestamp
 [docs/hnsw-optimization.md](../hnsw-optimization.md). Every one is the same
 configuration — SIFT1M, M=16, efConstruction=200, the full 10,000-query set, three runs —
 so the only thing that varies between files is the implementation.
+
+## JMH microbenchmarks
+
+The JSON written by JMH for the runs quoted in the documentation, committed because the build
+directory they were written to is not. `scripts/readme_tables.py` reads them directly.
+
+| file | benchmark | quoted in |
+|---|---|---|
+| `jmh-distance.json` | `DistanceBenchmark`, all methods | docs/kernels.md, guide Part 4 |
+| `jmh-scan.json` | `DistanceBenchmark` block scans, re-run with `-Xmx4g` | docs/kernels.md |
+| `jmh-scanram.json` | `DistanceBenchmark.scanRamSimdL2Unrolled`, re-run | docs/kernels.md |
+| `jmh-pq2.json` | `PqScanBenchmark.lookupTable*`, before and after transposing the codebooks | guide Part 7.6 |
+| `jmh-pqscan.json` | `PqScanBenchmark.scan*`, serial vs four-accumulator PQ scan | README, guide Part 10.2 |
+
+Later files override earlier ones for the same benchmark and parameter, in the order listed.
 
 ## Per-query analysis
 

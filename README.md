@@ -8,7 +8,7 @@ The headline: on SIFT1M this HNSW reaches **recall@10 of 0.9920 in 165 µs per q
 single-threaded — matching the exact answer on 99.2% of neighbours over a million vectors —
 and beats `IndexHNSWFlat` on latency at all 54 swept configurations (201 µs against 165 at
 the same settings) while computing 0.8–2.4% *more* distances. On GIST1M at 960 dimensions the advantage
-reverses: on the 30 configurations measured before the machine artefact described below, this
+reverses: on the 30 configurations unaffected by the timing artefact described below, this
 implementation is 1.28–1.74x FAISS's latency. The more useful result is why: **this implementation's
 bookkeeping is faster and its distance kernel is slower**, so which one wins depends on how much
 arithmetic sits behind each candidate.
@@ -26,7 +26,7 @@ to land in the same neighbourhood and be able to point at exactly where the rema
 
 ## A complete guide, for readers new to any of this
 
-**[docs/guide/ann-java-guide.pdf](docs/guide/ann-java-guide.pdf)** — a 36-page illustrated
+**[docs/guide/ann-java-guide.pdf](docs/guide/ann-java-guide.pdf)** — a 37-page illustrated
 walkthrough written to be readable with no prior knowledge of vector search. It defines every
 term on first use, explains how HNSW and IVF-PQ actually work with diagrams, walks through every
 optimization and every failure, describes every file in the repository, and ends with a glossary.
@@ -113,7 +113,7 @@ the whole shipped set, and both sides of each comparison use the same one.)
 | max | HNSW | M=32,efC=400,ef=512 | 0.9884 | 4,037 µs | 5,806 µs † | 259.7 MiB |
 | max | IVF-PQ | nlist=4096,m=32,nprobe=64 | 0.2821 | 1,932 µs | **673 µs †** | 50.3 MiB |
 
-† FAISS row from a build block affected by the measurement artefact — see [Limitations](#limitations). Its latency is inflated, so this comparison understates FAISS.
+† FAISS row recorded after the machine slowed partway through the GIST1M sweep — see [the timing artefact](#a-timing-artefact-in-the-faiss-gist1m-sweep). Its latency is inflated, so this comparison understates FAISS.
 <!-- END GENERATED: results-gist -->
 
 <!-- BEGIN GENERATED: ceiling -->
@@ -147,7 +147,40 @@ not unique:
 The comparison is therefore tolerance-based and one-sided: finding something *closer* than
 the ground truth names is never an error.
 
-### Where the FAISS gap comes from — two gradients, and one that had to be retracted
+### A timing artefact in the FAISS GIST1M sweep
+
+<!-- BEGIN GENERATED: artefact -->
+The FAISS GIST1M sweep ran as a single job on 5 Sep, building its HNSW indexes in order of
+`M` and `efConstruction` and then the IVF-PQ ones. From the `M=16,efC=400` build onward —
+started at about 03:28 UTC — FAISS's timings are inflated, and they stay inflated to the end
+of the run. Two measurements that share no code step up at the same point:
+
+* **Build time.** FAISS needs 0.65–0.74 of this project's build time on the first five
+  GIST1M indexes and 0.96–1.21 on the last four. On SIFT1M the same ratio stays
+  within 1.09–1.23 across all nine.
+* **Search latency.** At `M=16`, this project's latency is 1.50–1.63x FAISS's on the
+  two indexes built before the step and 0.76x on the `efC=400` index built after
+  it. Across the whole sweep, this project is faster than FAISS at 19 of 54 GIST1M
+  configurations, and all 19 are on the last four indexes.
+
+A step in both at once, tied to a moment in the run rather than to any parameter, points to
+the machine slowing down rather than to either implementation.
+
+**How the numbers here handle it.** `scripts/readme_tables.py` flags an index whose
+FAISS/Java build-time ratio sits more than 1.25x from the sweep's median (the
+affected ones sit 1.30–1.65x from it), and treats every FAISS row recorded from the first flagged
+index onward as affected. On GIST1M that is 24 of 54 HNSW configurations — every
+one at M=32 — plus all IVF-PQ configurations; on SIFT1M it flags nothing. Affected rows
+are marked †, left out of every GIST1M range, and never counted as a win for this project.
+`python3 scripts/readme_tables.py --audit` prints the evidence index by index.
+
+**What the unaffected data shows.** FAISS is faster at all 30 unaffected GIST1M
+configurations, by 1.28–1.74x. No M=32 index is unaffected, so on GIST1M the
+comparison at M=32 has not been measured cleanly; re-running the four affected FAISS
+builds would settle it.
+<!-- END GENERATED: artefact -->
+
+### Where the FAISS gap comes from — three gradients, not one number
 
 Beating FAISS is not a credible outcome for a from-scratch implementation, so it was treated
 as a defect in the comparison until it survived three checks:
@@ -173,19 +206,17 @@ rather than holding as one number. Mean-latency ratio, this project ÷ FAISS, on
 | 64 | 1.47 | 1.57 † | *(0.90)* † |
 | 512 | 1.30 | 1.44 † | *(0.78)* † |
 
-Mean over the three `efConstruction` values, **counting only rows the measurement artefact
-did not touch**. † marks a cell that had to drop at least one row; a cell in
-*(parentheses)* had no clean rows at all and is shown for reference only, not relied on.
-24 of 54 GIST1M configurations are affected, and **every configuration in which this
-project beats FAISS on GIST1M is one of them** — see [Limitations](#limitations).
+Mean over the three `efConstruction` values, **counting only rows unaffected by the
+[timing artefact](#a-timing-artefact-in-the-faiss-gist1m-sweep)**. † marks a cell that had to drop at least one
+row; a cell in *(parentheses)* had no unaffected rows at all and is shown for reference only,
+not relied on.
 <!-- END GENERATED: ratio-gist -->
 
 <!-- BEGIN GENERATED: ratio-sift -->
 On SIFT1M the same ratio runs 0.63–0.92 across all 54 configurations — this
-project is faster everywhere. On GIST1M, restricted to the 30 configurations the artefact
-did not touch, it runs 1.28–1.74 — FAISS is faster everywhere. The two datasets bracket
-the crossover rather than contradicting each other. Two gradients hold across both, and a
-third runs opposite to what this README once claimed:
+project is faster everywhere. On GIST1M's 30 unaffected configurations it runs
+1.28–1.74 — FAISS is faster everywhere. The two datasets bracket the crossover rather than
+contradicting each other, and three gradients account for both:
 <!-- END GENERATED: ratio-sift -->
 
 <!-- BEGIN GENERATED: gradients -->
@@ -279,15 +310,19 @@ makes a software prefetch possible.
 
 Kept because a table of only the wins is not a record of what happened.
 
+<!-- BEGIN GENERATED: failed-optimizations -->
 * **Four accumulators in the PQ scan.** The exact fix that wins 2.6x in the L2 kernel
-  measured 6.84 µs against 6.855 — nothing. The caller's loop over codes already supplies all
+  measured 6.840 µs against 6.855 at m=16 — nothing. The caller's loop over codes already supplies all
   the instruction-level parallelism the processor needs; the L2 kernel had no outer loop to
   hide behind. Reverted.
-* **Cache-blocking the k-means assignment.** 1119.8 s against 1102.4 — a wash. The loop was
-  already running at 93 M distances/s, *above* the 75 M/s the microbenchmark gives for an
-  L1-resident pair, because the point stays in L1 across all 4096 centroids. There was no
-  memory traffic to remove. FAISS's 8x is **register** blocking via `sgemm` — a tile of pairs
-  computed at once so each load feeds many FMAs — not cache blocking. Reverted.
+* **Cache-blocking the k-means assignment.** 1119.8 s against 1102.4 for `nlist=4096` — a wash.
+  (The blocked build was reverted without keeping its CSV row; its time is recorded in commit
+  c5c4dae.) The loop was already running at 93 M distances/s, *above* the 75 M/s the
+  microbenchmark gives for an L1-resident pair, because the point stays in L1 across all 4096
+  centroids. There was no memory traffic to remove. FAISS's 8x is **register** blocking via
+  `sgemm` — a tile of pairs computed at once so each load feeds many FMAs — not cache blocking.
+  Reverted.
+<!-- END GENERATED: failed-optimizations -->
 * **A `IndexFlatL2` kernel-parity test.** Designed, then discarded before running: FAISS's
   flat scan is a blocked batched routine, while HNSW calls a `DistanceComputer` one vector at
   a time. It would have measured a different code path and answered nothing.
@@ -328,18 +363,22 @@ Kept because a table of only the wins is not a record of what happened.
 ./.venv/bin/python scripts/faiss_bench.py --dataset sift --csv docs/results/faiss-sift1m.csv
 ./.venv/bin/python scripts/plot_results.py docs/results/*sift1m.csv --dataset SIFT1M --out docs/plots
 
-python3 scripts/readme_tables.py            # regenerate every number in this file
-python3 scripts/readme_tables.py --check    # fail if any of them has drifted
+python3 scripts/readme_tables.py            # regenerate every generated figure in the docs
+python3 scripts/readme_tables.py --check    # fail if any of them disagrees with docs/results/
 python3 scripts/readme_tables.py --audit    # show the suspect-row evidence
 ```
 
 Every CSV behind every number is committed under [docs/results/](docs/results/), so the plots
 and tables regenerate without re-running anything.
 
-**No number in this README is typed by hand.** Every table, range and count between
-`<!-- BEGIN GENERATED -->` markers is produced by `scripts/readme_tables.py` from the CSVs in
-`docs/results/`, because the previous hand-written tables drifted away from the data after the
-FAISS sweeps were re-run. `--check` exits non-zero if the file and the data disagree.
+**Generated regions.** Every table, range and count between `<!-- BEGIN GENERATED -->`
+markers — in this README, [docs/analysis.md](docs/analysis.md),
+[docs/kernels.md](docs/kernels.md), [docs/results/README.md](docs/results/README.md) and the
+guide — is produced by `scripts/readme_tables.py` from the CSVs, oracle output and JMH JSON in
+`docs/results/`, so the prose cannot drift from the data. Where a sentence asserts a direction,
+the script checks it against the data and refuses to generate if it no longer holds. `--check`
+exits non-zero if any file and the data disagree, and `scripts/build_guide.sh` runs it before
+printing the PDF.
 
 **Hardware.** Apple M4 Pro (10 performance + 4 efficiency cores), 48 GiB, macOS 26.6,
 Temurin OpenJDK 21.0.9, `faiss-cpu` 1.15.0, 128-bit float vectors. JDK 21 is required; Gradle
@@ -352,23 +391,16 @@ resolves the toolchain. The Vector API is an incubator module, so every JVM invo
 
 <!-- BEGIN GENERATED: limitations -->
 * **The metric's ceiling is 0.999440 on SIFT and 0.999200 on GIST**, because ids are not
-  unique under ties. The searches themselves are exact. PROTOCOL.md §1 calls this a hard
-  bound that "no configuration can do better" than, and **that is wrong**: FAISS scores
-  0.999450 on SIFT1M, one slot in 100,000 above it. The figure is the tie-breaking
-  this project's oracle happened to choose, not an upper bound on any index. The protocol is
-  frozen, so the error is recorded here rather than edited there.
-* **The FAISS GIST1M sweep contains a measurement artefact, and it favours this project.**
-  Partway through the run — between the `M=16,efC=200` and `M=16,efC=400` builds, around
-  03:30–04:00 on 5 Sep — FAISS's wall clock steps up by roughly 1.5–2x and stays there.
-  Search latency and *build* time step together on the same block, and the two share no code,
-  so the cause is the machine rather than either implementation. 24 of 54 GIST1M HNSW
-  configurations and **every** GIST1M IVF-PQ configuration sit after the step; they are marked
-  † and excluded from every GIST1M range quoted above. **Every configuration in which this
-  project beat FAISS on GIST1M lies in the affected region**, so the earlier claim that this
-  implementation is level or ahead at M=32 on GIST1M is withdrawn — on the 30 unaffected
-  configurations FAISS is faster in all of them. Re-running the four affected builds is the fix
-  and has not been done; until it is, no GIST1M latency comparison here should be read as
-  favouring this project.
+  unique under ties. The searches themselves are exact. PROTOCOL.md calls 0.999440 a hard bound
+  — "no configuration can do better" ([line 39](PROTOCOL.md#L39)) and "the attainable maximum"
+  ([line 98](PROTOCOL.md#L98)) — and **that is wrong**: FAISS scores 0.999450 on SIFT1M,
+  one slot in 100,000 above it. The figure is the tie-breaking this project's oracle
+  happened to choose, not an upper bound on any index. The protocol is frozen, so the error is
+  recorded here rather than edited there.
+* **Four FAISS GIST1M builds need re-running.** The
+  [timing artefact](#a-timing-artefact-in-the-faiss-gist1m-sweep) leaves 24 of 54 GIST1M HNSW
+  configurations (every one at M=32) and all GIST1M IVF-PQ configurations without a
+  trustworthy FAISS latency. GIST1M latency comparisons here rest on the 30 that remain.
 * **Single-threaded throughout**, build and search, on both sides. It is the only setting in
   which "mine took X and FAISS took Y" means anything, but it is not how either would be
   deployed, and it excludes FAISS's batched search paths entirely.
@@ -376,9 +408,9 @@ resolves the toolchain. The Vector API is an incubator module, so every JVM invo
 * **IVF-PQ search is 2.5–2.9x slower than FAISS** at `nprobe`=64 on SIFT1M
   (2.6–6.9x on GIST1M), localised to the list scan at ~1.8 cycles per table lookup
   against a load-throughput limit nearer 1.1.
-  Every FAISS GIST1M IVF-PQ row was measured after the step, so both GIST1M
-  figures here are **lower bounds on the gap**: the artefact inflates FAISS,
-  which flatters this implementation.
+  Every FAISS GIST1M IVF-PQ row was recorded after the machine slowed, so both
+  GIST1M figures here are **lower bounds on the gap**: the artefact inflates
+  FAISS, which flatters this implementation.
 * **IVF-PQ build is 4.6–8.7x slower on SIFT1M and 11.8–24.3x slower on GIST1M**,
   and the cause is understood: closing it needs a GEMM microkernel with register-level tiling
   written against the Vector API, since rule 4 forbids linking a BLAS. Not attempted.

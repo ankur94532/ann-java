@@ -130,7 +130,7 @@ GIST needs `ef=512` to reach roughly what SIFT reaches at `ef=128`, and each of 
 queries costs about five times as much. The two effects compound rather than trade off:
 recall falls at fixed effort, *and* the effort needed to recover it rises.
 
-## 6. The Java/FAISS gap is not one number, it has two gradients and a retraction
+## 6. The Java/FAISS gap is not one number, it has three gradients
 
 The HNSW comparison reverses between datasets, and reading it as a single ratio hides what
 is going on. Mean-latency ratio, this project divided by FAISS — below 1 means this project
@@ -143,17 +143,15 @@ is faster:
 | 64 | 1.47 | 1.57 † | *(0.90)* † |
 | 512 | 1.30 | 1.44 † | *(0.78)* † |
 
-Mean over the three `efConstruction` values, counting only rows the measurement artefact
-described in [README.md](../README.md#limitations) did not touch. † marks a cell that had
-to drop at least one row; a cell in *(parentheses)* had no clean rows at all. 24 of 54 GIST1M
-configurations are affected, and every configuration in which this project beats FAISS on GIST1M
-is one of them — so **no GIST1M cell below 1.0 here is trustworthy**, and the M=32 column in
-particular cannot support the claim it was once used for.
+Mean over the three `efConstruction` values, counting only rows unaffected by the timing
+artefact in the FAISS GIST1M sweep, described in
+[README.md](../README.md#a-timing-artefact-in-the-faiss-gist1m-sweep). † marks a cell that had to drop at least
+one row. A cell in *(parentheses)* had no unaffected rows — every FAISS M=32 GIST1M index was
+built after the machine slowed — and is not evidence either way.
 
 On SIFT1M the same ratio runs 0.63–0.92 across all 54 configurations, and on the
-30 unaffected GIST1M configurations it runs 1.28–1.74. Two consistent gradients and one reversal
-explain both tables at once — the third having reversed once the affected rows were
-excluded:
+30 unaffected GIST1M configurations it runs 1.28–1.74. Three gradients explain both
+tables at once:
 <!-- END GENERATED: analysis-ratio -->
 
 <!-- BEGIN GENERATED: analysis-gradients -->
@@ -169,10 +167,10 @@ excluded:
   neighbours to issue per hop, but on this data that does not turn into a gain against FAISS.
 <!-- END GENERATED: analysis-gradients -->
 
-SIFT is the regime where both surviving gradients favour this implementation, and GIST is the
-regime where dimension overwhelms them. There is no longer a corner of the grid where this
-implementation is ahead on GIST1M: the M=32 cells that once said so are the measurement
-artefact, and on unaffected rows FAISS is faster at every GIST1M configuration.
+SIFT is the regime where this implementation's cheaper bookkeeping outweighs FAISS's faster
+distance kernel; GIST is the regime where dimension tips the balance the other way, and FAISS is
+faster at every unaffected GIST1M configuration. The one part of the grid this cannot speak to is
+GIST1M at M=32, where no FAISS measurement is unaffected.
 
 **This also supplies the control the SIFT-only data could not.** Sweeping `M` alone would
 confound kernel work, hop count and cache behaviour. Sweeping dimension at fixed `M` and

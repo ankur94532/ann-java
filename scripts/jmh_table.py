@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """Merges JMH JSON result files into the tables used in docs/kernels.md.
 
-    python3 scripts/jmh_table.py build/jmh-distance.json build/jmh-scan.json ...
+    python3 scripts/jmh_table.py docs/results/jmh-distance.json docs/results/jmh-scan.json ...
 
 Later files win on duplicate (benchmark, dim) keys, so a re-run of one benchmark can be
-layered over an older full sweep.
+layered over an older full sweep. scripts/readme_tables.py imports `render` to own the
+tables in docs/kernels.md; run this directly only to preview a new JMH run.
 """
 import json
+import os
 import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+#: The committed runs behind docs/kernels.md, in layering order.
+KERNEL_RUNS = [os.path.join(ROOT, 'docs', 'results', name) for name in
+               ('jmh-distance.json', 'jmh-scan.json', 'jmh-scanram.json')]
 
 LANES = 4          # float lanes in a 128-bit NEON vector
 L2_BLOCK = 4 << 20
@@ -49,8 +57,7 @@ def table(results, dims, title, rows, per_call_vectors=None):
     return out
 
 
-def main(paths):
-    results = load(paths)
+def render(results):
     dims = sorted({d for _, d in results})
     out = []
     out += table(results, dims, "L2 squared, one L1-resident pair", [
@@ -91,8 +98,8 @@ def main(paths):
                 rate = vectors / (results[(ram_key, d)][0] / 1e9)
                 cells.append(f"{rate * d * 4 / 1e9:.1f}")
         out.append(f"| {label} | " + " | ".join(cells) + " |")
-    print("\n".join(out))
+    return "\n".join(out)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:] or ["build/jmh-distance.json"])
+    print(render(load(sys.argv[1:] or KERNEL_RUNS)))

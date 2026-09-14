@@ -160,7 +160,8 @@ at that level of depth:</p>
   <li>What the numbers said
     <ol><li>9.1 SIFT1M</li>
         <li>9.2 GIST1M — what breaks</li>
-        <li>9.3 The three gradients</li></ol></li>
+        <li>9.3 A timing artefact in the FAISS run</li>
+        <li>9.4 Where the FAISS gap comes from</li></ol></li>
   <li>What went wrong
     <ol><li>10.1 Four real mistakes</li>
         <li>10.2 Three failed optimizations</li></ol></li>
@@ -378,9 +379,13 @@ wrong.</p>
 <p>That is not a rounding artefact. SIFT components are whole numbers from 0 to 255, so every
 squared distance is a whole number below 16,777,216 — and a 32-bit float represents those
 exactly. The tie is real.</p>
-<p style="margin-bottom:0">646 of the 10,000 SIFT queries have such ties. <strong>So the
-highest recall anyone can score on SIFT under this protocol is 0.999440, not 1.0.</strong>
-GIST has the same problem for a different reason (Part 9), with a ceiling of 0.999200.</p>
+<!-- BEGIN GENERATED: guide-ceiling -->
+<p style="margin-bottom:0">646 of the 10,000 SIFT queries have such ties. So even a
+perfect search, scored against the shipped file, gets <strong>0.999440, not 1.0</strong>. That
+figure is not a hard limit either: an index that happens to break ties the way the file does
+can score slightly above it, and FAISS does (0.999450, Part 9.1). GIST has the same
+problem for a different reason (Part 9), with a figure of 0.999200.</p>
+<!-- END GENERATED: guide-ceiling -->
 </div>
 
 <p>This changed how correctness is checked. Comparing <em>ids</em> is meaningless when ids are
@@ -486,6 +491,7 @@ separately.</p>
 
 <p>Here is where the project found something genuinely non-obvious. Measured speedups:</p>
 
+<!-- BEGIN GENERATED: guide-kernel-table -->
 <table>
 <tr><th>Kernel</th><th class="n">d=128</th><th class="n">speedup</th><th class="n">d=960</th><th class="n">speedup</th></tr>
 <tr><td>scalar</td><td class="n">53.2 ns</td><td class="n">1.00×</td><td class="n">714.2 ns</td><td class="n">1.00×</td></tr>
@@ -497,6 +503,7 @@ separately.</p>
 <strong>10.17× is impossible on a four-lane machine.</strong> You cannot get more than 4× from
 having 4 lanes. So something else must be going on, and it must be that the <em>scalar
 baseline</em> is unusually slow at 960 dimensions.</p>
+<!-- END GENERATED: guide-kernel-table -->
 
 <p>It is, and the reason is a dependency chain. In <code>sum += d*d</code>, each addition needs
 the result of the previous addition. The CPU cannot start addition number 7 until number 6 has
@@ -539,21 +546,25 @@ four independent running totals lets four additions be in flight at once.</figca
 
 <div class="box key">
 <h4>The general lesson</h4>
+<!-- BEGIN GENERATED: guide-kernel-lesson -->
 <p style="margin:0">A speedup <em>larger than the lane count</em> is never extra parallelism in
 the SIMD code — it is a serial dependency in the baseline that the SIMD version was allowed to
-break. At d=960 the four-accumulator kernel wins 4× from lanes and another 2.6× from breaking
+break. At d=960 the four-accumulator kernel wins 3.9× from lanes and another 2.6× from breaking
 the chain. At d=128 it wins only the lanes, and the extra accumulators actually cost 0.5 ns
 because setting up and combining four running totals cannot be amortised over just 32 steps.</p>
+<!-- END GENERATED: guide-kernel-lesson -->
 </div>
 
 <h3>4.5 Results</h3>
 
+<!-- BEGIN GENERATED: guide-scan -->
 <p>A second measurement worth knowing: scanning a large block of vectors sequentially runs at
 the same speed whether the data is in the fastest cache or out in main memory (75.2 million
-vectors/second either way, at d=128). The CPU's prefetcher sees the predictable pattern and
-fetches ahead perfectly. <strong>This means a sequential scan is limited by arithmetic, not by
-memory</strong> — which turns out to matter a lot in Part 6, because a graph walk is
-<em>not</em> sequential and does not get that benefit.</p>
+vectors/second from main memory against 75.2 million in cache, at d=128). The CPU's
+prefetcher sees the predictable pattern and fetches ahead perfectly. <strong>This means a
+sequential scan is limited by arithmetic, not by memory</strong> — which turns out to matter a
+lot in Part 6, because a graph walk is <em>not</em> sequential and does not get that benefit.</p>
+<!-- END GENERATED: guide-scan -->
 
 <div class="page-break"></div>
 <h2>5. HNSW: search by walking a graph</h2>
@@ -817,14 +828,17 @@ the whole table would mean nothing. Recall is identical to six decimal places in
 
 <h3>6.1 The naive version</h3>
 
+<!-- BEGIN GENERATED: guide-naive -->
 <p>The reference implementation uses the obvious Java data structures:
 <code>ArrayList&lt;Integer&gt;</code> for neighbour lists, <code>HashSet&lt;Integer&gt;</code>
 to remember which nodes have been visited, and <code>PriorityQueue&lt;Candidate&gt;</code> for
-both heaps. On SIFT1M it builds in 779 seconds and answers a query in 447 µs (p95) at
+both heaps. On SIFT1M it builds in 779 seconds and answers a query in 447.5 µs (p95) at
 <code>ef=64</code>.</p>
+<!-- END GENERATED: guide-naive -->
 
 <h3>6.2 Five changes, measured</h3>
 
+<!-- BEGIN GENERATED: guide-opt-table -->
 <table>
 <tr><th>#</th><th>Change</th><th class="n">p95 @ ef=64</th><th class="n">build</th><th class="n">memory</th></tr>
 <tr><td>0</td><td>naive reference</td><td class="n">447.5 µs</td><td class="n">779.3 s</td><td class="n">494.8 MiB</td></tr>
@@ -837,6 +851,7 @@ both heaps. On SIFT1M it builds in 779 seconds and answers a query in 447 µs (p
 
 <p class="small"><strong>Cumulative: 3.8× faster queries, 3.5× faster builds, 3.6× less
 memory</strong> — with byte-identical results.</p>
+<!-- END GENERATED: guide-opt-table -->
 
 <h4>Step 1 — flat arenas (−20%)</h4>
 <p>Each node's neighbour list was an <code>ArrayList&lt;Integer&gt;</code>. Reading one edge
@@ -1073,13 +1088,15 @@ work — and an IVF-PQ query pays it <code>nprobe × m × 256</code> times.</p>
 one query number, subtract 4 codewords at once, accumulate across the piece's dimensions in a
 register, store 4 finished distances.</p>
 
+<!-- BEGIN GENERATED: guide-pq-lookup -->
 <table>
 <tr><th>m</th><th class="n">before</th><th class="n">after</th><th class="n">speedup</th></tr>
 <tr><td>8</td><td class="n">10.93 µs</td><td class="n">2.24 µs</td><td class="n">4.9×</td></tr>
 <tr><td>16</td><td class="n">13.51 µs</td><td class="n">2.71 µs</td><td class="n">5.0×</td></tr>
 <tr><td>32</td><td class="n">25.71 µs</td><td class="n">4.72 µs</td><td class="n">5.4×</td></tr>
-<tr><td>64</td><td class="n">51.17 µs</td><td class="n">6.15 µs</td><td class="n">8.3×</td></tr>
+<tr><td>64</td><td class="n">51.17 µs</td><td class="n">6.14 µs</td><td class="n">8.3×</td></tr>
 </table>
+<!-- END GENERATED: guide-pq-lookup -->
 
 <p>End to end this took a query from 1,461 µs to 694 µs — <strong>2.1× faster</strong>, with
 identical recall. The lesson generalises: the fix for a slow small kernel is often to restructure
@@ -1197,27 +1214,33 @@ into one table with no reconciliation step.</p>
 
 <h3>9.1 SIFT1M — 128 dimensions</h3>
 
+<!-- BEGIN GENERATED: guide-results-sift -->
 <table>
 <tr><th>target</th><th>index</th><th>configuration</th><th class="n">recall@10</th><th class="n">latency</th><th class="n">FAISS</th><th class="n">size</th></tr>
-<tr><td>≥0.90</td><td>HNSW</td><td>M=16, efC=200, ef=32</td><td class="n">0.9160</td><td class="n"><strong>53 µs</strong></td><td class="n">60 µs</td><td class="n">138 MiB</td></tr>
-<tr><td>≥0.99</td><td>HNSW</td><td>M=16, efC=200, ef=128</td><td class="n">0.9920</td><td class="n"><strong>165 µs</strong></td><td class="n">201 µs</td><td class="n">138 MiB</td></tr>
-<tr><td>max</td><td>HNSW</td><td>M=32, efC=400, ef=512</td><td class="n"><strong>0.9994</strong></td><td class="n">732 µs</td><td class="n">732 µs</td><td class="n">260 MiB</td></tr>
-<tr><td>max</td><td>IVF-PQ</td><td>nlist=4096, m=32, nprobe=64</td><td class="n">0.7380</td><td class="n">649 µs</td><td class="n">268 µs</td><td class="n"><strong>36.5 MiB</strong></td></tr>
-<tr><td>—</td><td>brute force</td><td>—</td><td class="n">0.9994</td><td class="n">~14 ms</td><td class="n">—</td><td class="n">—</td></tr>
+<tr><td>≥0.90</td><td>HNSW</td><td>M=16, efC=200, ef=32</td><td class="n">0.9160</td><td class="n"><strong>53 µs</strong></td><td class="n">60 µs</td><td class="n">137.9 MiB</td></tr>
+<tr><td>≥0.99</td><td>HNSW</td><td>M=16, efC=200, ef=128</td><td class="n">0.9920</td><td class="n"><strong>165 µs</strong></td><td class="n">201 µs</td><td class="n">137.9 MiB</td></tr>
+<tr><td>max</td><td>HNSW</td><td>M=32, efC=400, ef=512</td><td class="n">0.9994</td><td class="n"><strong>732 µs</strong></td><td class="n">976 µs</td><td class="n">259.7 MiB</td></tr>
+<tr><td>max</td><td>IVF-PQ</td><td>nlist=4096, m=32, nprobe=64</td><td class="n">0.7380</td><td class="n">649 µs</td><td class="n"><strong>237 µs</strong></td><td class="n">36.5 MiB</td></tr>
+<tr><td>—</td><td>exact brute force</td><td>14 threads</td><td class="n">0.9994</td><td class="n">~14 ms</td><td class="n">—</td><td class="n">—</td></tr>
 </table>
 
-<p>HNSW reaches <strong>0.9994 — the exact ceiling</strong> the tie analysis established, at
-19× the speed of brute force. At the more practical 0.9920 it is 85× faster.</p>
+<p>At its best setting this HNSW reaches <strong>0.999420</strong>, 2 slots in
+100,000 short of the 0.999440 figure from Part 2.4; FAISS reaches 0.999450, just above it.
+The brute-force row is the exact search from Part 2.4, and it is <strong>not a like-for-like
+latency</strong>: it ran on 14 threads (143 s for 10,000 queries), while every other row is
+single-threaded.</p>
 
 <p>The two families barely compete. HNSW needs 138 MiB of graph <em>plus</em> the 488 MiB of raw
 vectors, because it computes real distances during the search. IVF-PQ's 36.5 MiB is the entire
 index. If the data fits in memory, use the graph; if it does not, the quantizer is not a
 compromise, it is the only option that runs.</p>
+<!-- END GENERATED: guide-results-sift -->
 
 <h3>9.2 GIST1M — 960 dimensions, and what breaks</h3>
 
 <p>Identical code, identical parameter grid, 7.5× more dimensions.</p>
 
+<!-- BEGIN GENERATED: guide-recall-drop -->
 <table>
 <tr><th>best recall@10</th><th class="n">SIFT1M</th><th class="n">GIST1M</th><th class="n">change</th></tr>
 <tr><td>HNSW, this project</td><td class="n">0.9994</td><td class="n">0.9884</td><td class="n">−1.1 points</td></tr>
@@ -1225,6 +1248,7 @@ compromise, it is the only option that runs.</p>
 <tr><td>IVF-PQ, this project</td><td class="n">0.7380</td><td class="n"><strong>0.2821</strong></td><td class="n"><strong>−45.6 points</strong></td></tr>
 <tr><td>IVF-PQ, FAISS</td><td class="n">0.7347</td><td class="n"><strong>0.2804</strong></td><td class="n"><strong>−45.4 points</strong></td></tr>
 </table>
+<!-- END GENERATED: guide-recall-drop -->
 
 <div class="box key">
 <h4>The two families fail completely differently</h4>
@@ -1292,31 +1316,89 @@ the graph connected at all.</strong></p>
 at it. On SIFT: zero queries affected. On GIST: <strong>10 of 1,000</strong>. That is a hard
 recall floor that no tuning removes, and it appears only at high dimension.</p>
 
-<h3>9.3 The three gradients</h3>
+<h3>9.3 A timing artefact in the FAISS GIST1M run</h3>
 
-<p>Against FAISS, this project's HNSW is faster on SIFT at all 36 configurations and slower on
-GIST at low degree. Read as a single ratio that looks contradictory. It is not.</p>
+<!-- BEGIN GENERATED: guide-artefact -->
+<p>The FAISS side of GIST1M ran as one long job on 5 Sep, building its HNSW indexes one after
+another in the order below. Partway through — from the <code>M=16, efC=400</code> build, which started
+at about 03:28 UTC — the machine slowed down, and every FAISS timing recorded after that point is
+inflated. Nothing in the result files says so. It has to be read out of the numbers.</p>
+
+<p>The giveaway is build time. Building an index and answering queries are timed by different
+code, so a change in how long FAISS takes to <em>build</em> cannot be caused by anything in the
+search:</p>
+
+<table>
+<tr><th>index</th><th class="n">build, this project</th><th class="n">build, FAISS</th><th class="n">FAISS ÷ this project</th></tr>
+<tr><td>M=8, efC=100</td><td class="n">368 s</td><td class="n">268 s</td><td class="n">0.73</td></tr>
+<tr><td>M=8, efC=200</td><td class="n">700 s</td><td class="n">516 s</td><td class="n">0.74</td></tr>
+<tr><td>M=8, efC=400</td><td class="n">1,329 s</td><td class="n">975 s</td><td class="n">0.73</td></tr>
+<tr><td>M=16, efC=100</td><td class="n">544 s</td><td class="n">356 s</td><td class="n">0.65</td></tr>
+<tr><td>M=16, efC=200</td><td class="n">1,083 s</td><td class="n">710 s</td><td class="n">0.66</td></tr>
+<tr><td>M=16, efC=400 †</td><td class="n">2,121 s</td><td class="n">2,028 s</td><td class="n"><strong>0.96</strong></td></tr>
+<tr><td>M=32, efC=100 †</td><td class="n">701 s</td><td class="n">850 s</td><td class="n"><strong>1.21</strong></td></tr>
+<tr><td>M=32, efC=200 †</td><td class="n">1,425 s</td><td class="n">1,498 s</td><td class="n"><strong>1.05</strong></td></tr>
+<tr><td>M=32, efC=400 †</td><td class="n">2,928 s</td><td class="n">3,322 s</td><td class="n"><strong>1.13</strong></td></tr>
+</table>
+<p class="small">† recorded after the slowdown. On SIFT1M the same ratio stays within
+1.09–1.23 for all nine indexes.</p>
+
+<p>FAISS builds GIST1M indexes in 0.65–0.74 of this project's time on the first
+five, then 0.96–1.21 on the last four. Search latency shifts at the same point: at
+M=16, this project's latency is 1.50–1.63× FAISS's on the two indexes built before
+the step and 0.76× on the one built after it. A jump in both at once, tied to a moment in
+the run rather than to any parameter, points to the machine rather than to either
+implementation. Every GIST1M IVF-PQ row was recorded after the slowdown too.</p>
+
+<div class="box warn">
+<h4>All of this project's GIST1M "wins" came from the slow stretch</h4>
+<p style="margin:0">In the raw numbers this project beats FAISS at 19 of the 54 GIST1M HNSW
+configurations, and all 19 are on the four affected indexes. On the 30 configurations measured
+before the slowdown, FAISS is faster at every one, by 1.28–1.74×. No M=32 index was built before
+it, so how the two compare at M=32 on GIST1M is simply not known yet — re-running the
+four affected FAISS builds would settle it.</p>
+</div>
+
+<p>The rest of this part uses only unaffected rows for GIST1M and marks the others with
+†. The tables that follow are produced from the result files by
+<code>scripts/readme_tables.py</code>, which detects the slowdown with this build-time test
+rather than by date, and <code>--audit</code> prints the evidence.</p>
+<!-- END GENERATED: guide-artefact -->
+
+<h3>9.4 Where the FAISS gap comes from</h3>
+
+<!-- BEGIN GENERATED: guide-gradients -->
+<p>Against FAISS, this project's HNSW is faster on SIFT at all 54 configurations and slower on
+GIST at all 30 unaffected ones. Read as a single ratio that looks contradictory. It is not.</p>
 
 <table>
 <tr><th class="n">GIST, ef</th><th class="n">M=8</th><th class="n">M=16</th><th class="n">M=32</th></tr>
-<tr><td class="n">16</td><td class="n">1.49</td><td class="n">1.35</td><td class="n">1.07</td></tr>
-<tr><td class="n">64</td><td class="n">1.47</td><td class="n">1.28</td><td class="n">0.98</td></tr>
-<tr><td class="n">512</td><td class="n">1.30</td><td class="n">1.26</td><td class="n"><strong>0.82</strong></td></tr>
+<tr><td class="n">16</td><td class="n">1.49</td><td class="n">1.68 †</td><td class="n"><em>(0.95)</em> †</td></tr>
+<tr><td class="n">64</td><td class="n">1.47</td><td class="n">1.57 †</td><td class="n"><em>(0.90)</em> †</td></tr>
+<tr><td class="n">512</td><td class="n">1.30</td><td class="n">1.44 †</td><td class="n"><em>(0.78)</em> †</td></tr>
 </table>
 <p class="small">Ratio of this project's latency to FAISS's. Below 1.0 means this project is
-faster. On SIFT the same ratio runs 0.63–0.90 everywhere.</p>
+faster. Mean over the three <code>efConstruction</code> values, unaffected rows only: † marks a
+cell that lost at least one row to the slowdown, and a value in <em>(parentheses)</em> had none left
+and is shown for reference only. On SIFT the same ratio runs 0.63–0.92; on GIST's unaffected
+rows, 1.28–1.74.</p>
 
 <p>Three consistent trends explain both datasets with one model:</p>
 <ul>
   <li><strong>More dimensions → FAISS gains.</strong> More arithmetic per candidate while
-      bookkeeping per candidate is unchanged. The distance kernel is FAISS's advantage.</li>
+      bookkeeping per candidate is unchanged: mean ratio 0.82 on SIFT against 1.50 on GIST.
+      The distance kernel is FAISS's advantage.</li>
   <li><strong>More <code>efSearch</code> → this project gains.</strong> More candidates pass
-      through the visited stamps and the heaps. That bookkeeping is this project's advantage —
-      exactly what steps 2 and 3 bought.</li>
-  <li><strong>More <code>M</code> → this project gains.</strong> More pending neighbours per hop
-      for the step-5 prefetch to fetch together, and at 960 dimensions each cache miss costs
-      3,840 bytes.</li>
+      through the visited stamps and the heaps: the ratio falls from 0.89 to 0.69 on SIFT and
+      from 1.57 to 1.36 on GIST between ef=16 and ef=512. That bookkeeping is this
+      project's advantage — exactly what steps 2 and 3 bought.</li>
+  <li><strong>More <code>M</code> → FAISS gains.</strong> The ratio goes 0.79 → 0.82 → 0.84 from M=8 to
+      M=32 on SIFT, and 1.43 → 1.57 from M=8 to M=16 on GIST.
+      No GIST1M M=32 index is unaffected, so that column cannot say.
+      A higher degree gives the step-5 prefetch more neighbours to fetch per hop, but on this
+      data that does not turn into a gain against FAISS.</li>
 </ul>
+<!-- END GENERATED: guide-gradients -->
 
 <div class="box key">
 <h4>Why two datasets were needed</h4>
@@ -1331,15 +1413,17 @@ alone.</p>
 <h4>Three checks the result had to survive</h4>
 <p>Beating FAISS is not a credible outcome for a from-scratch implementation, so it was treated
 as a broken comparison until it survived:</p>
+<!-- BEGIN GENERATED: guide-checks -->
 <ol>
   <li><strong>Graph sizes match.</strong> 137.6 MiB against 137.9 at M=16 — 0.2% apart, within
-      0.7% at every M. Two independent implementations filling the same degree budget.</li>
+      0.8% at every M. Two independent implementations filling the same degree budget.</li>
   <li><strong>Search work matches.</strong> Distance computations per query: 518 against FAISS's
-      514 at ef=16; 6,942 against 6,781 at ef=512. <strong>This project computes ~2% more
+      514 at ef=16; 6,942 against 6,781 at ef=512. <strong>This project computes 0.8–2.4% more
       distances and is still faster</strong> — which also explains its slightly higher recall.</li>
   <li><strong>FAISS is not a crippled build.</strong> The installed package reports
       <code>OPTIMIZE ARM_NEON</code> with the full instruction set available.</li>
 </ol>
+<!-- END GENERATED: guide-checks -->
 <p>All three passed, so the difference is execution efficiency and nothing else. The result is
 still explicitly scoped: it was measured on an ARM machine where both sides get 4 SIMD lanes. On
 an x86 machine with AVX-512, FAISS's hand-written code gets 16 lanes against the same 4, and the
@@ -1382,17 +1466,20 @@ review.</p>
 
 <table>
 <tr><th>Attempt</th><th>Reasoning</th><th>Result</th></tr>
+<!-- BEGIN GENERATED: guide-failed -->
 <tr><td>Four accumulators in the PQ scan</td>
     <td>The same dependency-chain fix that wins 2.6× in the distance kernel.</td>
-    <td><strong>Nothing</strong> — 6.84 µs against 6.855. The caller's loop over codes already
+    <td><strong>Nothing</strong> — 6.840 µs against 6.855. The caller's loop over codes already
         supplied all the parallelism; the distance kernel had no outer loop to hide behind.
         Reverted.</td></tr>
 <tr><td>Cache-blocking k-means</td>
     <td>Reuse data while it is in cache instead of re-reading it.</td>
-    <td><strong>Nothing</strong> — 1119.8 s against 1102.4. The loop already ran at 93 million
-        distances/second, <em>above</em> the rate for cached data, because the point being
+    <td><strong>Nothing</strong> — 1119.8 s against 1102.4 (the first figure is from commit
+        <code>c5c4dae</code>; the reverted run's result file was not kept). The loop already ran at
+        93 million distances/second, <em>above</em> the rate for cached data, because the point being
         assigned stays in cache across all centroids. There was no memory traffic to remove.
         Reverted.</td></tr>
+<!-- END GENERATED: guide-failed -->
 <tr><td>A brute-force kernel comparison</td>
     <td>Time FAISS's flat scan to test whether its distance kernel is slow.</td>
     <td><strong>Discarded before running.</strong> FAISS's flat scan uses a different, batched
@@ -1488,6 +1575,7 @@ before touching either, and found the problem was in the half nobody would have 
 <tr><td><code>hnsw-optimization.md</code></td><td>The six-row optimization table with reasoning for every row.</td></tr>
 <tr><td><code>analysis.md</code></td><td>The GIST high-dimensional failure analysis.</td></tr>
 <tr><td><code>results/*.csv</code></td><td>Every measurement — 360 configurations. Plots regenerate from these.</td></tr>
+<tr><td><code>results/jmh-*.json</code></td><td>The JMH microbenchmark runs behind the kernel and product-quantization figures.</td></tr>
 <tr><td><code>plots/</code></td><td>Generated charts, light and dark variants.</td></tr>
 </table>
 
