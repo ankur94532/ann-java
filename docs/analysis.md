@@ -163,13 +163,10 @@ excluded:
 * **↑ efSearch → this project gains.** More candidates through the visited stamps and the two
   heaps, which is the bookkeeping steps 2 and 3 bought. Mean ratio falls from 0.89 at
   ef=16 to 0.69 at ef=512 on SIFT1M, and from 1.57 to 1.36 on GIST1M.
-* **↑ M → FAISS gains — the opposite of what this README used to claim.** The earlier
-  text argued that a higher degree gives the step-5 software prefetch more to issue at once, and
-  read a win at M=32 on GIST1M as confirmation. Those M=32 rows turned out to be the measurement
-  artefact. On data the artefact never touched the gradient runs the other way: mean ratio
-  0.79 → 0.84 from M=8 to M=32 on SIFT1M, and 1.43 → 1.57 from M=8 to
-  M=16 on GIST1M. Whatever the prefetch buys against this project's own earlier versions, it
-  does not show up as a gain against FAISS as degree rises.
+* **↑ M → FAISS gains.** Mean ratio 0.79 → 0.82 → 0.84 from M=8 to M=32 on SIFT1M, and
+  1.43 → 1.57 from M=8 to M=16 on GIST1M's unaffected rows
+  (no GIST1M M=32 build is unaffected). A higher degree gives the step-5 software prefetch more
+  neighbours to issue per hop, but on this data that does not turn into a gain against FAISS.
 <!-- END GENERATED: analysis-gradients -->
 
 SIFT is the regime where both surviving gradients favour this implementation, and GIST is the

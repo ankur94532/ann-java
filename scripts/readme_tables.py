@@ -405,28 +405,42 @@ def gradient_stats(sweep, skip_suspect):
     return mean(by_m), mean(by_ef)
 
 
+def require_trend(means, rising, label):
+    """Fail generation if a gradient the prose asserts does not hold monotonically."""
+    values = [means[k] for k in sorted(means)]
+    ok = all((b > a) if rising else (b < a) for a, b in zip(values, values[1:]))
+    if not ok:
+        raise SystemExit(f'gradient prose is stale: {label} is no longer '
+                         f'{"rising" if rising else "falling"}: {means}')
+
+
 def block_gradients(sift, gist):
-    """The gradient bullets, with each direction taken from the data rather than asserted."""
+    """The gradient bullets. Each asserted direction is checked against the data."""
     sm, se = gradient_stats(sift, False)
     gm, ge = gradient_stats(gist, True)
     s_dim, g_dim = statistics.mean(sm.values()), statistics.mean(gm.values())
+    if not g_dim > s_dim:
+        raise SystemExit('gradient prose is stale: GIST1M ratio no longer exceeds SIFT1M')
+    require_trend(se, False, 'SIFT1M ratio by efSearch')
+    require_trend(ge, False, 'GIST1M ratio by efSearch')
+    require_trend(sm, True, 'SIFT1M ratio by M')
+    require_trend(gm, True, 'GIST1M ratio by M')
     ef_lo, ef_hi = min(se), max(se)
     gef_lo, gef_hi = min(ge), max(ge)
-    m_lo, m_hi = min(sm), max(sm)
-    gm_lo, gm_hi = min(gm), max(gm)
+    s_m = ' \u2192 '.join(f'{sm[m]:.2f}' for m in sorted(sm))
+    g_m = ' \u2192 '.join(f'{gm[m]:.2f}' for m in sorted(gm))
+    g_missing = sorted(set(sm) - set(gm))
+    missing = (f'\n  (no GIST1M M={"/".join(map(str, g_missing))} build is unaffected)'
+               if g_missing else '')
     return f"""* **\u2191 dimension \u2192 FAISS gains.** More arithmetic per candidate, bookkeeping unchanged.
   Mean ratio {s_dim:.2f} on SIFT1M against {g_dim:.2f} on GIST1M's unaffected rows. The distance
   kernel is theirs.
 * **\u2191 efSearch \u2192 this project gains.** More candidates through the visited stamps and the two
   heaps, which is the bookkeeping steps 2 and 3 bought. Mean ratio falls from {se[ef_lo]:.2f} at
   ef={ef_lo} to {se[ef_hi]:.2f} at ef={ef_hi} on SIFT1M, and from {ge[gef_lo]:.2f} to {ge[gef_hi]:.2f} on GIST1M.
-* **\u2191 M \u2192 FAISS gains \u2014 the opposite of what this README used to claim.** The earlier
-  text argued that a higher degree gives the step-5 software prefetch more to issue at once, and
-  read a win at M=32 on GIST1M as confirmation. Those M=32 rows turned out to be the measurement
-  artefact. On data the artefact never touched the gradient runs the other way: mean ratio
-  {sm[m_lo]:.2f} \u2192 {sm[m_hi]:.2f} from M={m_lo} to M={m_hi} on SIFT1M, and {gm[gm_lo]:.2f} \u2192 {gm[gm_hi]:.2f} from M={gm_lo} to
-  M={gm_hi} on GIST1M. Whatever the prefetch buys against this project's own earlier versions, it
-  does not show up as a gain against FAISS as degree rises."""
+* **\u2191 M \u2192 FAISS gains.** Mean ratio {s_m} from M={min(sm)} to M={max(sm)} on SIFT1M, and
+  {g_m} from M={min(gm)} to M={max(gm)} on GIST1M's unaffected rows{missing}. A higher degree gives the step-5 software prefetch more
+  neighbours to issue per hop, but on this data that does not turn into a gain against FAISS."""
 
 
 def block_opt_table():
