@@ -139,11 +139,11 @@ is faster:
 <!-- BEGIN GENERATED: analysis-ratio -->
 | GIST1M, ef | M=8 | M=16 | M=32 |
 |---:|---:|---:|---:|
-| 16 | 1.49 | 1.35 | 1.07 |
-| 64 | 1.47 | 1.28 | 0.98 |
-| 512 | 1.30 | 1.26 | **0.82** |
+| 16 | 1.49 | 1.35 | 0.95 |
+| 64 | 1.47 | 1.28 | 0.90 |
+| 512 | 1.30 | 1.26 | 0.78 |
 
-On SIFT1M the same ratio runs 0.63–0.90 everywhere. Three consistent gradients explain both
+On SIFT1M the same ratio runs 0.63–0.92 everywhere. Three consistent gradients explain both
 tables at once:
 <!-- END GENERATED: analysis-ratio -->
 

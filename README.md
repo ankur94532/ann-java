@@ -6,11 +6,11 @@ GIST1M under a protocol frozen before either index was written.**
 <!-- BEGIN GENERATED: headline -->
 The headline: on SIFT1M this HNSW reaches **recall@10 of 0.9920 in 165 µs per query**
 single-threaded — matching the exact answer on 99.2% of neighbours over a million vectors —
-and beats `IndexHNSWFlat` on latency at all 36 swept configurations while computing 2% *more*
-distances. On GIST1M at 960 dimensions that advantage inverts at low degree and survives only at
-M=32, and the more useful result is why: **this implementation's bookkeeping is faster and
-its distance kernel is slower**, so which one wins depends on how much arithmetic sits behind
-each candidate.
+and beats `IndexHNSWFlat` on latency at all 54 swept configurations (201 µs against 165 at
+the same settings) while computing 0.8–2.4% *more* distances. On GIST1M at 960 dimensions that advantage
+inverts at low degree and survives only at M=32, and the more useful result is why: **this implementation's
+bookkeeping is faster and its distance kernel is slower**, so which one wins depends on how much
+arithmetic sits behind each candidate.
 <!-- END GENERATED: headline -->
 
 > **These numbers are aarch64-specific.** Measured on an Apple M4 Pro, where both sides get
@@ -62,9 +62,9 @@ still reaches 0.988. **The two index families do not degrade alike.**
 </picture>
 
 <!-- BEGIN GENERATED: memory-spans -->
-The families barely compete on memory. IVF-PQ spans 12–37 MiB; HNSW spans 77–260 MiB **and
+The families barely compete on memory. IVF-PQ spans 12.1–36.5 MiB; HNSW spans 77–260 MiB **and
 needs the 488 MiB of raw vectors on top**, because it computes real distances during the
-search. The two HNSW lines are one visible line: the implementations agree to 0.2%.
+search. The two HNSW lines are one visible line: the implementations agree to within 0.8%.
 <!-- END GENERATED: memory-spans -->
 
 <picture>
@@ -75,7 +75,7 @@ search. The two HNSW lines are one visible line: the implementations agree to 0.
 <!-- BEGIN GENERATED: build-divergence -->
 One point per built index — a scatter, since joining builds that differ in `M` or `nlist`
 would draw a trajectory nothing travels along. The two implementations diverge here most
-sharply and in opposite directions: HNSW builds **1.09–1.23x faster** here, IVF-PQ builds
+sharply and in opposite directions: on SIFT1M, HNSW builds **1.09–1.23x faster**, IVF-PQ builds
 **4.6–8.7x slower**.
 <!-- END GENERATED: build-divergence -->
 
@@ -90,12 +90,14 @@ Cheapest configuration reaching each recall target, each side at its own best se
 
 | target | index | configuration | recall@10 | mean latency | FAISS | index size |
 |---|---|---|---:|---:|---:|---:|
-| ≥0.90 | HNSW | M=16, efC=200, ef=32 | 0.9160 | **53 µs** | 60 µs | 138 MiB |
-| ≥0.95 | HNSW | M=32, efC=400, ef=32 | 0.9514 | **76 µs** | 84 µs | 260 MiB |
-| ≥0.99 | HNSW | M=16, efC=200, ef=128 | 0.9920 | **165 µs** | 201 µs | 138 MiB |
-| max | HNSW | M=32, efC=400, ef=512 | **0.9994** | 732 µs | 732 µs | 260 MiB |
-| max | IVF-PQ | nlist=4096, m=32, nprobe=64 | 0.7380 | 649 µs | 268 µs | **36.5 MiB** |
-| — | exact brute force | — | 0.9994 | ~14 ms | — | — |
+| ≥0.90 | HNSW | M=16,efC=200,ef=32 | 0.9160 | **53 µs** | 60 µs | 137.9 MiB |
+| ≥0.95 | HNSW | M=32,efC=400,ef=32 | 0.9514 | **76 µs** | 84 µs | 259.7 MiB |
+| ≥0.99 | HNSW | M=16,efC=200,ef=128 | 0.9920 | **165 µs** | 201 µs | 137.9 MiB |
+| max | HNSW | M=32,efC=400,ef=512 | 0.9994 | **732 µs** | 976 µs | 259.7 MiB |
+| max | IVF-PQ | nlist=4096,m=32,nprobe=64 | 0.7380 | 649 µs | **237 µs** | 36.5 MiB |
+| — | exact brute force | scalar kernel, 14 threads | 0.9994 | ~14 ms | — | — |
+
+The brute-force row is the Checkpoint 1 oracle: 143 s for 10,000 queries on 14 threads. Every other row in this table is single-threaded, so it is **not** a like-for-like latency.
 <!-- END GENERATED: results-sift -->
 
 <!-- BEGIN GENERATED: results-gist -->
@@ -105,16 +107,16 @@ the whole shipped set, and both sides of each comparison use the same one.)
 
 | target | index | configuration | recall@10 | mean latency | FAISS | index size |
 |---|---|---|---:|---:|---:|---:|
-| ≥0.90 | HNSW | M=32, efC=200, ef=128 | 0.9132 | 1134 µs | **914 µs** | 260 MiB |
-| ≥0.95 | HNSW | M=32, efC=200, ef=256 | 0.9602 | 2013 µs | **1695 µs** | 260 MiB |
-| max | HNSW | M=32, efC=400, ef=512 | 0.9884 | 4037 µs | 4388 µs | 260 MiB |
-| max | IVF-PQ | nlist=4096, m=32, nprobe=64 | **0.2821** | 1932 µs | 1897 µs | 50.3 MiB |
+| ≥0.90 | HNSW | M=32,efC=200,ef=128 | 0.9132 | 1,134 µs | **914 µs<br><sub>M=16,efC=200,ef=256, r=0.9223</sub>** | 259.7 MiB |
+| ≥0.95 | HNSW | M=32,efC=200,ef=256 | 0.9602 | 2,013 µs | **1,695 µs<br><sub>M=16,efC=200,ef=512, r=0.9586</sub>** | 259.7 MiB |
+| max | HNSW | M=32,efC=400,ef=512 | 0.9884 | **4,037 µs** | 5,806 µs | 259.7 MiB |
+| max | IVF-PQ | nlist=4096,m=32,nprobe=64 | 0.2821 | 1,932 µs | **673 µs** | 50.3 MiB |
 <!-- END GENERATED: results-gist -->
 
 <!-- BEGIN GENERATED: ceiling -->
 **0.999440 and 0.999200 are the ceilings, not 1.0.** The datasets contain vectors equidistant
-from a query, so the top-10 *ids* are not unique — see below. HNSW reaches the SIFT ceiling
-exactly.
+from a query, so the top-10 *ids* are not unique — see below. This HNSW reaches 0.999420,
+2 slots in 100,000 short of it.
 <!-- END GENERATED: ceiling -->
 
 ---
@@ -149,9 +151,9 @@ as a defect in the comparison until it survived three checks:
 <!-- BEGIN GENERATED: faiss-checks -->
 1. **The graphs are the same size.** Corrected for the `IndexFlat` that `IndexHNSWFlat`
    embeds, FAISS's graph is 137.6 MiB at M=16 against this project's 137.9 — 0.2% apart, and
-   within 0.7% at every M.
+   within 0.8% at every M.
 2. **The searches do the same work.** `hnsw_stats.ndis` per query at M=16/efC=200: 518 vs
-   514 at ef=16, 6,942 vs 6,781 at ef=512. **This implementation computes ~2% *more*
+   514 at ef=16, 6,942 vs 6,781 at ef=512. **This implementation computes 0.8–2.4% *more*
    distances and is still faster** — and that also explains its slightly higher recall.
 3. **FAISS is not a crippled build.** The wheel reports `OPTIMIZE DD ARM_NEON MAC_METAL`
    with the full ASIMD instruction set.
@@ -163,15 +165,15 @@ ratio, this project ÷ FAISS, on GIST1M:
 <!-- BEGIN GENERATED: ratio-gist -->
 | ef | M=8 | M=16 | M=32 |
 |---:|---:|---:|---:|
-| 16 | 1.49 | 1.35 | 1.07 |
-| 64 | 1.47 | 1.28 | 0.98 |
-| 512 | 1.30 | 1.26 | **0.82** |
+| 16 | 1.49 | 1.35 | 0.95 |
+| 64 | 1.47 | 1.28 | 0.90 |
+| 512 | 1.30 | 1.26 | 0.78 |
 <!-- END GENERATED: ratio-gist -->
 
 <!-- BEGIN GENERATED: ratio-sift -->
-On SIFT1M the same ratio runs 0.63–0.90 everywhere. So GIST does not simply flip the
-result — at M=32 this project is still level or ahead (0.82 at ef=512, and 4037 µs against
-4388 at the maximum-recall setting). It is the same three-gradient story, with dimension
+On SIFT1M the same ratio runs 0.63–0.92 everywhere. So GIST does not simply flip the
+result — at M=32 this project is still level or ahead (0.78 at ef=512, and 4,037 µs against
+5,806 at the maximum-recall setting). It is the same three-gradient story, with dimension
 pushing one way and `M` and `efSearch` pushing the other:
 <!-- END GENERATED: ratio-sift -->
 
@@ -244,6 +246,8 @@ dependency in the baseline that SIMD was allowed to break.**
 | 3. primitive `long[]` heaps | 160.4 µs | 282.6 s |
 | 4. split traversal / distances | 159.2 µs | 283.1 s |
 | 5. software prefetch | **117.0 µs** | **220.2 s** |
+
+Cumulative: **3.83x** on p95 at ef=64, **3.54x** on build.
 <!-- END GENERATED: opt-table -->
 
 **Recall is identical to six decimal places in every row at all six `efSearch` values, and
@@ -337,11 +341,12 @@ resolves the toolchain. The Vector API is an incubator module, so every JVM invo
   which "mine took X and FAISS took Y" means anything, but it is not how either would be
   deployed, and it excludes FAISS's batched search paths entirely.
 * **Results are aarch64-specific** and would plausibly reverse on AVX-512.
-* **IVF-PQ search is 2.5x slower than FAISS** at high `nprobe`, localised to the list scan at
-  ~1.8 cycles per table lookup against a load-throughput limit nearer 1.1.
-* **IVF-PQ build is 4.6–8.7x slower**, and the cause is understood: closing it needs a GEMM
-  microkernel with register-level tiling written against the Vector API, since rule 4 forbids
-  linking a BLAS. Not attempted.
+* **IVF-PQ search is 2.5–2.9x slower than FAISS** at `nprobe`=64 on SIFT1M
+  (2.6–6.9x on GIST1M), localised to the list scan at ~1.8 cycles per table lookup
+  against a load-throughput limit nearer 1.1.
+* **IVF-PQ build is 4.6–8.7x slower on SIFT1M and 11.8–24.3x slower on GIST1M**,
+  and the cause is understood: closing it needs a GEMM microkernel with register-level tiling
+  written against the Vector API, since rule 4 forbids linking a BLAS. Not attempted.
 * **No OPQ rotation**, so the product quantizer assumes the subspaces are uncorrelated. GIST
   shows what that costs. A learned rotation is the standard fix and is the single most
   valuable thing missing here — plausibly enough to clear 0.80 recall at m=32, which would
