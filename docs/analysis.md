@@ -136,6 +136,7 @@ The HNSW comparison reverses between datasets, and reading it as a single ratio 
 is going on. Mean-latency ratio, this project divided by FAISS — below 1 means this project
 is faster:
 
+<!-- BEGIN GENERATED: analysis-ratio -->
 | GIST1M, ef | M=8 | M=16 | M=32 |
 |---:|---:|---:|---:|
 | 16 | 1.49 | 1.35 | 1.07 |
@@ -144,7 +145,9 @@ is faster:
 
 On SIFT1M the same ratio runs 0.63–0.90 everywhere. Three consistent gradients explain both
 tables at once:
+<!-- END GENERATED: analysis-ratio -->
 
+<!-- BEGIN GENERATED: analysis-gradients -->
 * **More dimensions → FAISS gains.** Distance work per candidate grows while bookkeeping per
   candidate does not. The distance kernel is FAISS's advantage.
 * **More `efSearch` → this project gains.** More candidates pass through the visited stamps
@@ -153,6 +156,7 @@ tables at once:
 * **More `M` → this project gains.** A higher degree means more pending neighbours per hop,
   and the software prefetch of step 5 issues their loads together. At 960 dimensions each
   miss costs 3,840 bytes, so prefetching pays most where misses are dearest.
+<!-- END GENERATED: analysis-gradients -->
 
 SIFT is the regime where all three favour this implementation. GIST at M=8 is the worst
 case — expensive distances, little to prefetch — and GIST at M=32 is back to parity.
